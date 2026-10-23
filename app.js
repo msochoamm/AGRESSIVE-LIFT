@@ -1,12 +1,12 @@
 // AGRESSIVE LIFT — SPA modular. Estado único (S) + render por plantillas + delegación de eventos.
-import { CONFIG_OK, LOCAL_MODE, AUTH_MISCONFIGURED, sb, signIn, signUp, signOut, checkLicense, saveSet, saveBody, ai, flush } from './supabase.js';
-import { hydrate, store } from './store.js';
+import { CONFIG_OK, AI_ON, LOCAL_MODE, AUTH_MISCONFIGURED, sb, signIn, signUp, signOut, checkLicense, saveSet, saveBody, ai, flush } from './supabase.js';
+import { hydrate, store, profile, PROFILES } from './store.js';
 import * as E from './engine.js';
 import * as N from './nutrition.js';
 
 /* ---------- Utilidades y persistencia local ---------- */
 const $ = s => document.querySelector(s);
-const VERSION = 'v13';
+const VERSION = 'v14';
 const esc = t => String(t).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 await hydrate(); // IndexedDB → caché en memoria
 const today = () => new Date().toISOString().slice(0, 10);
@@ -156,7 +156,7 @@ const mesoWeek = () => Math.min(S.meso.weeks, Math.floor((Date.now() - S.meso.st
 
 /* ---------- Auth + muro de licencia ---------- */
 async function gate(session) {
-  if (LOCAL_MODE) { S.user = { id: 'local', email: 'local' }; S.screen = 'app'; S.msg = ''; return render(); } // sin login (temporal)
+  if (LOCAL_MODE) { S.user = { id: 'local-' + profile, email: PROFILES[profile] }; S.screen = 'app'; S.msg = ''; return render(); } // sin login (temporal)
   if (AUTH_MISCONFIGURED) { S.user = null; S.lock = 'network'; S.screen = 'locked'; return render(); }      // fail-closed
   if (!session) { S.user = null; S.screen = 'auth'; return render(); }
   S.user = session.user; S.screen = 'boot'; render();
@@ -228,7 +228,7 @@ const header = () => `
 <div class="flex justify-between items-center pt-4">
   <div><div class="brand-title font-black neon"><img src="icon-180.png" alt="">AGRESSIVE LIFT</div>
   <div class="text-xs text-zinc-500">Mesociclo · semana ${mesoWeek()}/${S.meso.weeks} · rotación bloqueada · ${VERSION}</div>${xpLine()}</div>
-  ${LOCAL_MODE ? '' : '<button class="btn ghost" data-act="logout">Salir</button>'}
+  ${LOCAL_MODE ? `<button class="btn ghost" data-act="switchuser">👤 ${esc(PROFILES[profile])}<br><small>Cambiar</small></button>` : '<button class="btn ghost" data-act="logout">Salir</button>'}
 </div>
 ${raveOn() ? `<div class="card on mt-3 text-sm">🔒 Modo Rave activo: PRs bloqueados ${Math.ceil((S.rave.prUntil - Date.now()) / 36e5)} h más. Entrena para técnica, no para récords.</div>` : ''}
 <div class="tabbar">${[['train', 'Entrenar'], ['food', 'Nutrición'], ['map', 'Músculos'], ['control', 'Control']]
@@ -538,8 +538,8 @@ ${profileSetup}
   <div class="h-2 bg-zinc-900 mt-2 rounded"><div class="h-2 rounded" style="width:${Math.min(100, m.k / b * 100)}%;background:#ff0033"></div></div></div>
 ${planCards()}
 <div class="card"><div class="font-bold mb-2">¿Qué comiste? (la IA calcula)</div>
-  <input id="meal" placeholder="${LOCAL_MODE ? 'Ej: arroz y pollo 650 kcal 45p 70c 15g' : 'Ej: corrientazo con pollo, arroz y plátano, jugo de mora'}">
-  <button class="btn fill w-full mt-2" data-act="analyze" ${S.busy ? 'disabled' : ''}>${S.busy ? 'Analizando…' : (LOCAL_MODE ? 'Registrar comida' : 'Analizar con IA')}</button>
+  <input id="meal" placeholder="${(LOCAL_MODE && !AI_ON) ? 'Ej: arroz y pollo 650 kcal 45p 70c 15g' : 'Ej: corrientazo con pollo, arroz y plátano, jugo de mora'}">
+  <button class="btn fill w-full mt-2" data-act="analyze" ${S.busy ? 'disabled' : ''}>${S.busy ? 'Analizando…' : ((LOCAL_MODE && !AI_ON) ? 'Registrar comida' : 'Analizar con IA')}</button>
   ${S.msg ? `<p class="text-sm text-red-400 mt-2">${esc(S.msg)}</p>` : ''}
   ${pv ? `<div class="card on mt-2 text-sm">${pv.items.map(i => `<div>${esc(i.name)} · ${i.k} kcal · P${i.p} C${i.c} G${i.f}</div>`).join('')}
     <div class="text-zinc-400 mt-1">Estimación (confianza ${Math.round(pv.confidence * 100)} %). ${esc(pv.note)}</div>
@@ -759,6 +759,7 @@ const controlView = () => {
   <div class="text-center"><div class="text-2xl font-black">${st} 🔥</div><div class="text-xs text-zinc-500">días de racha</div></div></div>
   <div class="xpbar big mt-2"><i style="width:${Math.round((x - a) / (nx - a) * 100)}%"></i></div>
   <div class="text-xs text-zinc-500 mt-1">${x - a} / ${nx - a} XP para el nivel ${L + 1} · total ${x} XP</div>
+  <button class="btn fill w-full mt-3" data-act="startworkout">🔥 INICIAR ENTRENAMIENTO</button>
   <div class="text-xs text-zinc-400 mt-2">XP por: series ${br.sets} · días entrenados ${br.train} · comida ${br.meals + br.target} · ejercicios terminados ${br.done} · peso ${br.weigh} · descansos ${br.rest}</div>
   <details class="mt-2 text-sm text-zinc-400"><summary>Cómo gano XP</summary>Serie +10 (+3 si RIR 0-1, +5 drop set; calentamiento +3) · ejercicio terminado +10 · PR +50 · día entrenado +40 · comida registrada +5 · día dentro de tu meta +25 · pesaje +15 · descanso marcado +10. Rangos: Novato, Agresivo (nv 5), Bestia (10), Titán (15), Élite (25), Leyenda (40).</details></div>
 <div class="card"><div class="font-bold">Hoy · ${state}</div>
@@ -851,6 +852,12 @@ const ACT = {
     render();
   },
   recheck() { return gate({ user: S.user }); },
+  switchuser() { sessionStorage.removeItem('al:profile'); sessionStorage.removeItem('alReload'); location.reload(); },
+  startworkout() { // INICIAR desde la tarjeta de XP: abre la rutina de hoy
+    S.view = 'train'; S.coachOpen = true;
+    if (!S.trainingConfigured) { S.trainingSectionTab = 'coach'; return toast('Primero cuéntale al entrenador cómo entrenas'); }
+    S.trainingSectionTab = 'routine'; S.routineDate = today(); toast('🔥 ¡A entrenar!');
+  },
   onboardfinish() {
     if (!S.trainingConfigured) return;
     S.onboarded = true; store.set('onboarded', true);
@@ -998,12 +1005,12 @@ const ACT = {
     if (input) input.value = '';
     render();
     let reply = nutritionReply(text, parsed.changed);
-    if (CONFIG_OK && N.ready(S.nutritionPreferences, !!S.target)) {
+    if (AI_ON || CONFIG_OK) {
       const remaining = E.scale(nutritionTarget(), budget(today()));
       try {
         const result = await ai('coach', { task: 'nutrition',
           systemPrompt: 'Eres el coach de nutrición de AGRESSIVE LIFT. Pregunta por hábitos, preferencias, restricciones, corrientazos y estilo de cocina. Adapta cada recomendación al mensaje actual, preferencias guardadas y macros restantes; evita respuestas genéricas repetidas. No inventes macros exactos sin cantidades.',
-          question: text, preferences: S.nutritionPreferences, conversation: S.nutritionChat.slice(-8),
+          question: text, missing: N.missing(S.nutritionPreferences, !!S.target), target: nutritionTarget(), preferences: S.nutritionPreferences, conversation: S.nutritionChat.slice(-8),
           remaining: { kcal: remaining.kcal - S.macros.k, protein: remaining.p - S.macros.p,
             carbs: remaining.c - S.macros.c, fat: remaining.f - S.macros.f },
           style: STYLES[S.style][0], meals: S.meals.slice(-3).map(meal => meal.text) });
@@ -1057,10 +1064,10 @@ const ACT = {
     S.busy = true; S.msg = ''; S.preview = null; render();
     try {
       const sc = E.scale(S.target, budget(today())), m = S.macros;
-      const r = LOCAL_MODE ? E.parseMeal(text) : await ai('meal', { text, restante: { k: sc.kcal - m.k, p: sc.p - m.p, c: sc.c - m.c, f: sc.f - m.f } });
+      const r = (LOCAL_MODE && !AI_ON) ? E.parseMeal(text) : await ai('meal', { text, restante: { k: sc.kcal - m.k, p: sc.p - m.p, c: sc.c - m.c, f: sc.f - m.f } });
       if (!r) throw new Error('Escribe los macros, ej: arroz y pollo 650 kcal 45p 70c 15g');
       S.preview = { ...r, text }; $('#meal').value = '';
-    } catch (e) { S.msg = LOCAL_MODE ? e.message : 'IA no disponible: ' + e.message + '. Inténtalo de nuevo.'; }
+    } catch (e) { S.msg = (LOCAL_MODE && !AI_ON) ? e.message : 'IA no disponible: ' + e.message + '. Inténtalo de nuevo.'; }
     S.busy = false;
   },
   confirmmeal() { const xb = totalXp(); addMeal(S.preview.items, S.preview.text); S.preview = null; syncHist(); xpToast(xb); },
@@ -1240,7 +1247,7 @@ async function sendCoachMessage(text) {
   S.aiTab = 'coach';
   store.set('aiTab', S.aiTab);
   render();
-  if (CONFIG_OK) {
+  if (AI_ON || CONFIG_OK) {
     try {
       const result = await ai('coach', {
         task: 'training', systemPrompt: TRAINER_SYSTEM_PROMPT, currentMessage: text,
@@ -1248,7 +1255,7 @@ async function sendCoachMessage(text) {
         recentMessages: S.coachChat.slice(-8),
       });
       const modelReply = String(result.note || '').trim();
-      if (!request && modelReply && modelReply !== previousReply && modelReply !== reply) {
+      if (modelReply && modelReply !== previousReply) {
         S.coachChat[S.coachChat.length - 1] = { role: 'assistant', text: modelReply };
         S.note = modelReply;
         store.set('coachChat', S.coachChat);

@@ -7,6 +7,9 @@ const SUPABASE_URL = 'https://TU-PROYECTO.supabase.co';  // <-- reemplazar
 const SUPABASE_ANON_KEY = 'TU-ANON-KEY';                 // <-- reemplazar (pública; la seguridad es RLS)
 const configured = !SUPABASE_URL.includes('TU-PROYECTO') && !SUPABASE_ANON_KEY.includes('TU-ANON-KEY');
 
+// IA REAL sin login: Edge Function 'ai' en Supabase (la clave de OpenAI vive allí como secreto).
+// Con URL/anon key reales la IA se activa sola; sin configurar, la app usa sus respuestas locales.
+export const AI_ON = configured;
 export const LOCAL_MODE = !AUTH_ENABLED;
 export const AUTH_MISCONFIGURED = AUTH_ENABLED && !configured;
 export const CONFIG_OK = AUTH_ENABLED && configured;
@@ -50,6 +53,17 @@ addEventListener('online', flush);
 
 /** IA vía Edge Function (requiere cuenta + licencia). En modo local lanza error y la app usa respuestas locales. */
 export async function ai(task, payload) {
+  if (LOCAL_MODE && AI_ON) {
+    const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 45000);
+    try {
+      const res = await fetch(SUPABASE_URL + '/functions/v1/ai', { method: 'POST', signal: ctl.signal,
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + SUPABASE_ANON_KEY, apikey: SUPABASE_ANON_KEY },
+        body: JSON.stringify({ task, payload, profile: sessionStorage.getItem('al:profile') || 'juani' }) });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data || data.error) throw new Error(data?.error || 'IA no disponible (' + res.status + ')');
+      return data;
+    } catch (e) { throw new Error(e.name === 'AbortError' ? 'La IA tardó demasiado' : e.message); } finally { clearTimeout(t); }
+  }
   if (!sb) throw new Error('La IA requiere iniciar sesión');
   const { data, error } = await timeout(sb.functions.invoke('ai', { body: { task, payload } }), 25000);
   if (error || !data || data.error) throw new Error(data?.error || error?.message || 'IA no disponible');

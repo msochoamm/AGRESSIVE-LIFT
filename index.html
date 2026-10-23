@@ -21,6 +21,18 @@ function fail(m){if(window.__ok)return;document.getElementById('app').innerHTML=
 addEventListener('error',e=>fail(e.message));addEventListener('unhandledrejection',e=>fail(e.reason));
 setTimeout(()=>fail('Tiempo agotado. Revisa que todos los archivos estén en la misma carpeta (app.js, store.js, engine.js, nutrition.js, supabase.js).'),7000);
 </script>
-<script type="module" src="app.js"></script>
+<script>
+/* ¿Quién entrena? Se pregunta antes de abrir la app; "Cambiar usuario" vuelve aquí. */
+(function(){
+  var P=sessionStorage.getItem('al:profile');
+  function start(){import('./app.js').catch(function(e){fail(e.message||e)})}
+  if(P==='juani'||P==='sebastian')return start();
+  window.__ok=1;
+  var h='<div style="padding:14vh 16px 0;text-align:center"><img src="logo.png" width="180" height="180" alt="" style="margin:0 auto"><p style="color:#a1a1aa;margin:12px 0 24px">¿Quién va a entrenar?</p>';
+  [['juani','JUANI'],['sebastian','SEBASTIAN']].forEach(function(u){h+='<button data-u="'+u[0]+'" style="display:block;width:100%;max-width:320px;margin:0 auto 12px;padding:16px;border-radius:14px;border:2px solid #ff2b57;background:#000;color:#fff;font-size:20px;font-weight:900;letter-spacing:2px">'+u[1]+'</button>'});
+  document.getElementById('app').innerHTML=h+'</div>';
+  document.getElementById('app').onclick=function(e){var b=e.target.closest('button[data-u]');if(!b)return;sessionStorage.setItem('al:profile',b.dataset.u);window.__ok=0;document.getElementById('app').innerHTML='<div style="padding:30vh 16px 0;text-align:center;color:#ff2b57;font-size:22px">Cargando…</div>';start();};
+})();
+</script>
 </body>
 </html>
