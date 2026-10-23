@@ -10,7 +10,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="stylesheet" href="styles.css">
-<link rel="modulepreload" href="app.js"><link rel="modulepreload" href="store.js"><link rel="modulepreload" href="engine.js">
+<link rel="modulepreload" href="app.js"><link rel="modulepreload" href="store.js"><link rel="modulepreload" href="engine.js"><link rel="modulepreload" href="nutrition.js">
 <title>AGRESSIVE LIFT</title>
 </head>
 <body>
@@ -19,7 +19,7 @@
 /* Si la app no arranca, muestra el motivo en pantalla en vez de dejarla en negro. */
 function fail(m){if(window.__ok)return;document.getElementById('app').innerHTML='<div style="padding:25vh 16px 0;text-align:center;color:#ff2b57;font-size:22px">No se pudo iniciar<br><small style="color:#a1a1aa;font-size:14px">'+String(m).replace(/</g,'&lt;')+'</small></div>'}
 addEventListener('error',e=>fail(e.message));addEventListener('unhandledrejection',e=>fail(e.reason));
-setTimeout(()=>fail('Tiempo agotado. Revisa que todos los archivos estén en la misma carpeta (app.js, store.js, engine.js, supabase.js).'),7000);
+setTimeout(()=>fail('Tiempo agotado. Revisa que todos los archivos estén en la misma carpeta (app.js, store.js, engine.js, nutrition.js, supabase.js).'),7000);
 </script>
 <script type="module" src="app.js"></script>
 </body>

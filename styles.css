@@ -177,3 +177,13 @@ button.calendar-day{font:inherit;color:inherit;position:relative;flex-direction:
 .onb-step{font-size:12px;padding:4px 10px;border-radius:999px;border:1px solid #3a3a40;color:#a1a1aa}
 .onb-step.ok{border-color:var(--red);color:#fff;background:#2a0812}
 .uppercase{text-transform:uppercase}.tracking{letter-spacing:.08em}
+
+/* ---- v13: nutricionista ---- */
+.nutri-next{padding:10px 12px;border-radius:10px;border:1px dashed rgba(255,43,87,.6);background:rgba(255,43,87,.07);font-size:14px;line-height:1.4;color:#ffd7df}
+.nq{margin-top:10px}.nq-t{font-size:14px;font-weight:700}
+.strat{margin:6px 0 0;padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:14px;line-height:1.4;color:#d4d4d8}
+.daytabs{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;margin:10px 0}
+.daytabs .chip{padding:6px 0;min-height:40px;font-size:13px;text-align:center}
+.meal{border-top:1px solid var(--line);padding:10px 0}
+.mealtag{flex:none;font-size:11px;padding:3px 8px;border-radius:999px;border:1px solid #3a3a40;color:#d4d4d8;white-space:nowrap}
+details>summary{cursor:pointer}

@@ -2,15 +2,15 @@
 import { CONFIG_OK, LOCAL_MODE, AUTH_MISCONFIGURED, sb, signIn, signUp, signOut, checkLicense, saveSet, saveBody, ai, flush } from './supabase.js';
 import { hydrate, store } from './store.js';
 import * as E from './engine.js';
+import * as N from './nutrition.js';
 
 /* ---------- Utilidades y persistencia local ---------- */
 const $ = s => document.querySelector(s);
-const VERSION = 'v12';
+const VERSION = 'v13';
 const esc = t => String(t).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 await hydrate(); // IndexedDB → caché en memoria
 const today = () => new Date().toISOString().slice(0, 10);
 const DEFAULT_TRAINING_SCHEDULE = { days: 3, split: 'PPL', cycle: false, workDays: 3, restDays: 4, startDate: today(), weekdays: [1, 3, 5] };
-const NUTRITION_GREETING = 'Antes de abrir tus macros, cuéntame cómo comes normalmente, qué alimentos prefieres o evitas, si sueles comer corrientazo/en la calle y qué estilo te funciona: batch cooking, cocinar al día, híbrido o macros libres.';
 const TRAINER_SYSTEM_PROMPT = 'Eres el entrenador de AGRESSIVE LIFT. Obedece el mensaje actual del usuario: nunca sustituyas una frecuencia o división explícita por una recomendación genérica de 3 días. Si indica días, descanso cíclico o estilo (PPL, torso/pierna o full body), confirma exactamente esos parámetros y entrega sesiones con ejercicios. Usa el calendario, esquema y plan actuales como contexto. No repitas literalmente tu respuesta anterior; responde en español y con acciones concretas.';
 const nutritionHistory = store.get('nutritionChatHistory', []);
 const previousNutritionChat = store.get('nutritionChat', []);
@@ -18,7 +18,7 @@ if (previousNutritionChat.some(message => message.role === 'user')) {
   nutritionHistory.unshift({ endedAt: new Date().toISOString(), messages: previousNutritionChat });
   store.set('nutritionChatHistory', nutritionHistory.slice(0, 100));
 }
-const freshNutritionChat = [{ role: 'assistant', text: NUTRITION_GREETING }];
+const freshNutritionChat = [{ role: 'assistant', text: N.greeting(store.get('nutritionPreferences', {}), !!store.get('target', null)) }];
 store.set('nutritionChat', freshNutritionChat);
 const savedTrainingSchedule = store.get('trainingSchedule', null);
 const savedTrainingPlan = store.get('trainingPlan', []);
@@ -135,6 +135,7 @@ const S = {
   nutritionChat: freshNutritionChat,
   nutritionHistory: store.get('nutritionChatHistory', []),
   nutritionBusy: false,
+  menuDay: (new Date().getDay() + 6) % 7, menuSeed: store.get('menuSeed', 0),
 };
 if (!S.trainingPlan.length) {
   S.trainingPlan = [
@@ -345,16 +346,30 @@ const calendarCard = () => {
   </div>`;
 };
 
-const nutritionCoachCard = () => `<div class="card nutrition-coach">
+const profileCard = () => `<div class="card"><div class="font-bold mb-2">1 · Perfil y objetivo</div>
+  <div class="grid grid-cols-2 gap-2"><input id="pf-kg" type="number" inputmode="decimal" placeholder="Peso kg"><input id="pf-h" type="number" inputmode="numeric" placeholder="Altura cm">
+  <input id="pf-a" type="number" inputmode="numeric" placeholder="Edad"><select id="pf-s"><option value="m">Hombre</option><option value="f">Mujer</option></select></div>
+  <select id="pf-g" class="mt-2"><option value="cut">Definición (bajar grasa)</option><option value="maint">Mantenimiento</option><option value="bulk">Volumen (ganar músculo)</option></select>
+  <button class="btn fill w-full mt-2" data-act="profile">Calcular mis macros</button></div>`;
+const nOn = (k, v) => { const c = S.nutritionPreferences[k]; return Array.isArray(c) ? c.includes(v) : String(c) === v; };
+const nGroup = q => `<div class="nq"><div class="nq-t">${q.q}${q.multi ? ' <span class="text-zinc-500">(varias)</span>' : ''}</div><div class="quick-prompts !mt-1">${q.opts.map(([v, l]) => `<button class="chip ${nOn(q.k, v) ? 'on' : ''}" data-act="nopt" data-k="${q.k}" data-v="${v}">${l}</button>`).join('')}</div></div>`;
+const nutritionCoachCard = () => {
+  const miss = N.missing(S.nutritionPreferences, !!S.target), ok = !miss.length;
+  return `<div class="card on"><div class="text-xs text-zinc-500 uppercase tracking">${ok ? 'Perfil completo' : 'Entrevista nutricional · obligatoria'}</div>
+    <div class="text-xl font-black mt-1">${ok ? 'Tu nutricionista ya te conoce' : 'Diseñemos tu forma de comer'}</div>
+    <div class="text-sm text-zinc-400 mt-1">${ok ? 'Puedes ajustar cualquier respuesta cuando quieras: el menú y la lista de compras se recalculan.' : 'Respóndele al nutricionista: presupuesto, proteínas, tiempo y nevera definen tu menú semanal con gramos exactos.'}</div>
+    <div class="onb-steps mt-3">${N.STEPS.map(([k, l]) => `<span class="onb-step ${miss.includes(k) ? '' : 'ok'}">${miss.includes(k) ? '○' : '✓'} ${l}</span>`).join('')}</div></div>
+  ${!S.target ? profileCard() : ''}
+  <div class="card nutrition-coach">
   <div class="flex justify-between items-center gap-2">
-    <div><div class="text-xs text-zinc-500 uppercase tracking">Coach IA · Nutrición</div><div class="font-bold text-lg">¿Qué preparamos?</div></div>
+    <div><div class="text-xs text-zinc-500 uppercase tracking">Nutricionista IA</div><div class="font-bold text-lg">${ok ? '¿Qué preparamos?' : 'Cuéntame cómo vas a cumplir tu objetivo'}</div></div>
     <span class="text-xs text-zinc-500">Sesión actual</span>
   </div>
-  ${!S.target ? '<div class="text-xs text-zinc-500 mt-2">Completa el perfil para personalizar tus macros; mientras tanto usaré una referencia general.</div>' : ''}
   <div class="coach-chat nutrition-chat" aria-live="polite">
     ${S.nutritionChat.map(m => `<div class="coach-bubble ${m.role === 'user' ? 'user' : 'assistant'}">${esc(m.text)}</div>`).join('')}
     ${S.nutritionBusy ? '<div class="coach-bubble assistant">Pensando una opción…</div>' : ''}
   </div>
+  ${!ok ? `<div class="nutri-next mt-3">👉 ${esc(N.askFor(miss[0]))}</div>` : ''}
   <div class="quick-prompts">
     <button class="chip" data-act="nutritionprompt" data-msg="Tengo pollo y arroz, ¿qué preparo?">Pollo y arroz</button>
     <button class="chip" data-act="nutritionprompt" data-msg="Dame una cena alta en proteína">Cena alta en proteína</button>
@@ -362,7 +377,7 @@ const nutritionCoachCard = () => `<div class="card nutrition-coach">
     <button class="chip" data-act="nutritionprompt" data-msg="Quiero pedir un corrientazo, ¿cómo lo ajusto?">Comida callejera</button>
   </div>
   <div class="coach-input-row">
-    <input id="nutrition-input" type="text" placeholder="Ingredientes, antojo o comida…" maxlength="220" ${S.nutritionBusy ? 'disabled' : ''}>
+    <input id="nutrition-input" type="text" placeholder="Ej: presupuesto económico, como pollo y huevo, 15 min…" maxlength="220" ${S.nutritionBusy ? 'disabled' : ''}>
     <button class="btn fill" data-act="nutritionsend" ${S.nutritionBusy ? 'disabled' : ''}>Enviar</button>
   </div>
   ${S.nutritionHistory.length ? `<details class="nutrition-history"><summary>Conversaciones anteriores (${S.nutritionHistory.length})</summary>
@@ -370,8 +385,35 @@ const nutritionCoachCard = () => `<div class="card nutrition-coach">
       ${session.messages.map(m => `<div class="coach-bubble ${m.role === 'user' ? 'user' : 'assistant'}">${esc(m.text)}</div>`).join('')}
     </details>`).join('')}
   </details>` : ''}
-</div>`;
-
+</div>
+<div class="card"><div class="font-bold mb-1">${S.target ? '' : '2 · '}Respuestas rápidas</div><div class="text-xs text-zinc-500 mb-2">Toca para responder sin escribir. Todo lo marcado alimenta tu menú.</div>
+  ${N.QUESTIONS.filter(q => q.req).map(nGroup).join('')}
+  <details class="mt-2" ${N.QUESTIONS.filter(q => !q.req).some(q => (S.nutritionPreferences[q.k] || []).length) ? 'open' : ''}><summary class="text-sm text-zinc-400" style="min-height:40px;display:flex;align-items:center">Afinar más (restricciones, suplementos, obstáculos)</summary>${N.QUESTIONS.filter(q => !q.req).map(nGroup).join('')}</details></div>
+<button class="btn fill w-full" data-act="nutriplan" ${ok ? '' : 'disabled'}>${ok ? 'Ver mi plan nutricional →' : `Faltan ${miss.length} dato${miss.length > 1 ? 's' : ''} para abrir tu plan`}</button>`;
+};
+/* ---------- Plan: estrategia + menú semanal + compras ---------- */
+const currentMenu = () => N.generateMenu(nutritionTarget(), S.nutritionPreferences, S.menuSeed);
+const PREP = { nevera: m => `🧊 Nevera · ${m} min`, cocinar: m => `🍳 ${m} min`, rapido: m => `⚡ ${m} min`, fuera: () => '🍽️ Restaurante' };
+const planCards = () => {
+  const prefs = S.nutritionPreferences, t = nutritionTarget(), menu = currentMenu(), day = Math.min(S.menuDay, 6), meals = menu.days[day] || [];
+  const DN = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'], tot = meals.reduce((a, m) => ({ k: a.k + m.k, p: a.p + m.p, c: a.c + m.c, f: a.f + m.f }), { k: 0, p: 0, c: 0, f: 0 });
+  const strat = N.strategy({ target: t, prefs, goal: S.profile?.goal || 'maint', trainDays: S.trainingSchedule?.days || 3 }), groc = N.groceries(menu);
+  const GL = { prot: 'Proteínas', supp: 'Suplementos', dairy: 'Lácteos', carb: 'Carbohidratos', veg: 'Verduras', fat: 'Grasas' };
+  return `<div class="card on"><div class="font-bold text-lg">🎯 Tu estrategia</div><div class="text-xs text-zinc-500 mb-1">Hecha con tus respuestas · ${t.kcal} kcal · P ${t.p} · C ${t.c} · G ${t.f}</div>
+    <ul class="strat">${strat.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>
+  <div class="card"><div class="flex justify-between items-center gap-2"><div class="font-bold text-lg">🍽️ Menú de la semana</div><button class="chip !px-3" data-act="menuregen">🔄 Otra variante</button></div>
+    <div class="daytabs">${DN.map((d, i) => `<button class="chip ${day === i ? 'on' : ''}" data-act="menuday" data-i="${i}">${d}</button>`).join('')}</div>
+    ${meals.map((m, i) => `<div class="meal"><div class="flex justify-between items-start gap-2"><div class="min-w-0"><div class="text-xs neon uppercase">${m.slot}</div><div class="font-bold leading-tight">${esc(m.name)}</div></div><span class="mealtag">${(PREP[m.prep] || PREP.cocinar)(m.mins)}</span></div>
+      <div class="text-sm text-zinc-400 mt-1">${m.items.map(it => esc(it.text)).join(' · ')}</div>
+      <div class="flex justify-between items-center mt-1"><span class="text-xs text-zinc-500">${m.k} kcal · P ${m.p} · C ${m.c} · G ${m.f}</span><button class="chip !px-3" data-act="mealadd" data-d="${day}" data-i="${i}">＋ Registrar</button></div></div>`).join('') || '<div class="text-sm text-zinc-500">No pude armar el menú con esas restricciones: amplía las proteínas o el tiempo.</div>'}
+    <div class="text-xs text-zinc-400 mt-2">Día: <b class="text-white">${tot.k}</b> kcal · P ${tot.p} · C ${tot.c} · G ${tot.f} <span class="text-zinc-500">(meta ${t.kcal} · P ${t.p} · C ${t.c} · G ${t.f})</span></div>
+    ${menu.notes.map(n => `<div class="text-xs text-zinc-500 mt-1">ℹ️ ${esc(n)}</div>`).join('')}
+    ${menu.prep.length ? `<details class="mt-2"><summary class="text-sm" style="min-height:40px;display:flex;align-items:center">🧊 Qué preparar en la nevera</summary><ul class="strat">${menu.prep.map(x => `<li>${esc(x)}</li>`).join('')}</ul><div class="text-xs text-zinc-500">Cocina por lotes (domingo y miércoles). Dura 3–4 días en nevera; congela el resto.</div></details>` : ''}</div>
+  <div class="card"><details><summary class="font-bold text-lg" style="min-height:40px;display:flex;align-items:center">🛒 Lista de compras (7 días)</summary>
+    <div class="text-xs text-zinc-500 mb-1">Pesos crudos aproximados para 1 persona.</div>
+    ${Object.keys(GL).map(g => { const l = groc.filter(x => x.group === g); return l.length ? `<div class="text-xs neon uppercase mt-2">${GL[g]}</div>${l.map(x => `<div class="ctl-row"><span>${esc(x.n)}${x.tier === 1 ? ' <span class="text-xs text-zinc-500">· económico</span>' : ''}</span><b>${x.amount}</b></div>`).join('')}` : ''; }).join('')}</details></div>
+  <div class="card"><div class="flex justify-between items-center gap-2"><div class="text-sm text-zinc-400">¿Cambió algo (presupuesto, proteínas, tiempo)?</div><button class="chip !px-3" data-act="nutritiontab" data-tab="chat">Ajustar</button></div></div>`;
+};
 const coachPanel = () => `
 <div class="card coach-panel on">
   <div class="text-xs text-zinc-500 uppercase tracking">Coach de entrenamiento</div>
@@ -475,10 +517,10 @@ const trainView = () => `<div class="section-subtabs" role="tablist" aria-label=
 ${S.trainingSectionTab === 'coach' ? coachPanel() : trainingRoutinePanel()}`;
 
 const foodView = () => {
-  const hasResponded = S.nutritionChat.some(message => message.role === 'user');
+  const unlocked = N.ready(S.nutritionPreferences, !!S.target);
   const tabs = `<div class="section-subtabs" role="tablist" aria-label="Sección Nutrición">
     <button class="chip ${S.nutritionSectionTab === 'chat' ? 'on' : ''}" role="tab" aria-selected="${S.nutritionSectionTab === 'chat'}" data-act="nutritiontab" data-tab="chat">💬 Nutricionista IA</button>
-    <button class="chip ${S.nutritionSectionTab === 'plan' ? 'on' : ''}" role="tab" aria-selected="${S.nutritionSectionTab === 'plan'}" data-act="nutritiontab" data-tab="plan" ${hasResponded ? '' : 'disabled'}>🍽️ Tu Plan Nutricional</button>
+    <button class="chip ${S.nutritionSectionTab === 'plan' ? 'on' : ''}" role="tab" aria-selected="${S.nutritionSectionTab === 'plan'}" data-act="nutritiontab" data-tab="plan" ${unlocked ? '' : 'disabled'}>🍽️ Tu Plan Nutricional</button>
   </div>`;
   if (S.nutritionSectionTab === 'chat') return `${tabs}${nutritionCoachCard()}`;
   const profileSetup = !S.target ? `<div class="card"><div class="font-bold mb-2">Perfil inicial</div>
@@ -494,6 +536,7 @@ ${profileSetup}
 <div class="card"><div class="font-bold">Hoy: ${m.k} / ${b} kcal${S.adj[today()] ? ` <span class="text-xs neon">(${S.adj[today()] > 0 ? '+' : ''}${S.adj[today()]} ajuste)</span>` : ''}</div>
   <div class="text-sm text-zinc-400">Quedan: <b class="text-white">${sc.kcal - m.k} kcal</b> · P ${sc.p - m.p} · C ${sc.c - m.c} · G ${sc.f - m.f}</div>
   <div class="h-2 bg-zinc-900 mt-2 rounded"><div class="h-2 rounded" style="width:${Math.min(100, m.k / b * 100)}%;background:#ff0033"></div></div></div>
+${planCards()}
 <div class="card"><div class="font-bold mb-2">¿Qué comiste? (la IA calcula)</div>
   <input id="meal" placeholder="${LOCAL_MODE ? 'Ej: arroz y pollo 650 kcal 45p 70c 15g' : 'Ej: corrientazo con pollo, arroz y plátano, jugo de mora'}">
   <button class="btn fill w-full mt-2" data-act="analyze" ${S.busy ? 'disabled' : ''}>${S.busy ? 'Analizando…' : (LOCAL_MODE ? 'Registrar comida' : 'Analizar con IA')}</button>
@@ -824,7 +867,7 @@ const ACT = {
     S.trainingSectionTab = d.tab === 'routine' ? 'routine' : 'coach';
   },
   nutritiontab(d) {
-    if (d.tab === 'plan' && !S.nutritionChat.some(message => message.role === 'user')) return;
+    if (d.tab === 'plan' && !N.ready(S.nutritionPreferences, !!S.target)) return;
     S.nutritionSectionTab = d.tab === 'plan' ? 'plan' : 'chat';
   },
   muscleside(d) { S.muscleSide = d.side === 'back' ? 'back' : 'front'; },
@@ -944,16 +987,9 @@ const ACT = {
     const text = (input?.value || '').trim();
     if (!text || S.nutritionBusy) return;
     S.nutritionChat.push({ role: 'user', text });
-    const normalized = text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    const preferences = { ...S.nutritionPreferences, lastUpdate: text, updatedAt: new Date().toISOString() };
-    if (/batch\s*cooking|cocinar.*semana|cocino.*semana/.test(normalized)) S.style = preferences.style = 'batch';
-    else if (/cocina al dia|cocino.*diario|cada dia/.test(normalized)) S.style = preferences.style = 'dia';
-    else if (/hibrid/.test(normalized)) S.style = preferences.style = 'hibrido';
-    else if (/macro libres|contar macros|flexible/.test(normalized)) S.style = preferences.style = 'libres';
-    if (/corrientazo|calle|restaurante|domicilio/.test(normalized)) preferences.eatsOut = true;
-    if (/vegetarian|vegano|sin carne/.test(normalized)) preferences.foodPreference = 'vegetariana';
-    if (/pollo|carne|pescado|huevo|atun|atún/.test(normalized)) preferences.favorites = text;
-    if (/alerg|intoler|no como|no consumo|evito/.test(normalized)) preferences.restrictions = text;
+    const parsed = N.parse(text, S.nutritionPreferences);
+    const preferences = { ...parsed.prefs, lastUpdate: text, updatedAt: new Date().toISOString() };
+    if (parsed.prefs.style) S.style = parsed.prefs.style;
     S.nutritionPreferences = preferences;
     store.set('nutritionPreferences', preferences);
     store.set('style', S.style);
@@ -961,8 +997,8 @@ const ACT = {
     S.nutritionBusy = true;
     if (input) input.value = '';
     render();
-    let reply = nutritionReply(text);
-    if (CONFIG_OK) {
+    let reply = nutritionReply(text, parsed.changed);
+    if (CONFIG_OK && N.ready(S.nutritionPreferences, !!S.target)) {
       const remaining = E.scale(nutritionTarget(), budget(today()));
       try {
         const result = await ai('coach', { task: 'nutrition',
@@ -979,6 +1015,21 @@ const ACT = {
     S.nutritionBusy = false;
     store.set('nutritionChat', S.nutritionChat);
   },
+  nopt(d) {
+    const q = N.QUESTIONS.find(x => x.k === d.k); if (!q) return;
+    const p = { ...S.nutritionPreferences }, v = d.v;
+    if (q.multi) { const a = new Set(p[d.k] || []); if (a.has(v)) a.delete(v); else { if (v === 'ninguna' || v === 'ninguno') a.clear(); else { a.delete('ninguna'); a.delete('ninguno'); } a.add(v); } p[d.k] = [...a]; }
+    else p[d.k] = d.k === 'meals' ? +v : v;
+    if (d.k === 'style') { S.style = v; store.set('style', v); }
+    S.nutritionPreferences = p; store.set('nutritionPreferences', p);
+  },
+  nutriplan() { if (N.ready(S.nutritionPreferences, !!S.target)) { S.nutritionSectionTab = 'plan'; toast('✅ Plan nutricional listo'); } },
+  menuday(d) { S.menuDay = +d.i || 0; },
+  menuregen() { S.menuSeed++; store.set('menuSeed', S.menuSeed); },
+  mealadd(d) {
+    const m = currentMenu().days[+d.d]?.[+d.i]; if (!m) return;
+    const xb = totalXp(); addMeal([{ k: m.k, p: m.p, c: m.c, f: m.f }], `${m.slot}: ${m.name}`); syncHist(); xpToast(xb); toast('🍽️ Comida registrada');
+  },
   nutritionprompt(d) {
     const input = $('#nutrition-input');
     if (input) input.value = d.msg || '';
@@ -986,7 +1037,7 @@ const ACT = {
   },
   step(d) { const i = $('#' + d.f); i.value = Math.max(0, +((parseFloat(i.value) || 0) + +d.s).toFixed(1)); },
   rest30() { S.rest += 3e4; }, restoff() { S.rest = 0; S.restWhy = ''; },
-  style(d) { S.style = d.k; store.set('style', d.k); },
+  style(d) { S.style = d.k; store.set('style', d.k); S.nutritionPreferences = { ...S.nutritionPreferences, style: d.k }; store.set('nutritionPreferences', S.nutritionPreferences); },
   profile() {
     const kg = val('pf-kg'), h = val('pf-h'), age = val('pf-a');
     if (!(kg > 30 && h > 120 && age > 13)) return alert('Completa peso, altura y edad');
@@ -1207,7 +1258,12 @@ async function sendCoachMessage(text) {
   }
 }
 
-function nutritionReply(text) {
+function nutritionReply(text, changed = []) {
+  const prefs = S.nutritionPreferences, miss = N.missing(prefs, !!S.target);
+  if (miss.length) return changed.length ? N.interviewReply(changed, prefs, !!S.target) : `${nutritionAnswer(text)}\n\n${N.interviewReply([], prefs, !!S.target)}`;
+  return changed.length ? `Actualicé tu plan con: ${changed.map(k => N.LABELS[k] || k).join(', ')}. Revisa el menú y la lista de compras en «Tu Plan Nutricional».` : nutritionAnswer(text);
+}
+function nutritionAnswer(text) {
   const t = text.toLowerCase();
   const remaining = E.scale(nutritionTarget(), budget(today()));
   const kcal = Math.max(0, remaining.kcal - S.macros.k);

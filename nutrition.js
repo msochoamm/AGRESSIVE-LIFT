@@ -1,0 +1,275 @@
+// Nutricionista IA — parte DETERMINISTA: cuestionario, estrategia y menú semanal con gramos calculados.
+// La IA generativa (si hay cuenta) solo conversa; los números salen de aquí (testeables).
+
+/* ---------- Alimentos (por 100 g, peso cocido salvo avena/whey) ---------- */
+// tier de costo en Colombia: 1 barato · 2 medio · 3 caro. raw = factor cocido→crudo para la lista de compras.
+export const FOODS = {
+  muslo: { n: 'Muslo de pollo sin piel', s: 'muslo de pollo', k: 179, p: 25, c: 0, f: 8, tier: 1, raw: 1.3, kind: 'prot' },
+  pechuga: { n: 'Pechuga de pollo', s: 'pechuga', k: 165, p: 31, c: 0, f: 3.6, tier: 2, raw: 1.3, kind: 'prot' },
+  molida: { n: 'Carne molida magra', s: 'carne molida', k: 215, p: 26, c: 0, f: 12, tier: 2, raw: 1.3, kind: 'prot' },
+  res: { n: 'Res magra (lomo/bistec)', s: 'res magra', k: 200, p: 29, c: 0, f: 8.5, tier: 3, raw: 1.3, kind: 'prot' },
+  cerdo: { n: 'Lomo de cerdo', s: 'lomo de cerdo', k: 190, p: 29, c: 0, f: 7.5, tier: 2, raw: 1.3, kind: 'prot' },
+  pescado: { n: 'Tilapia / pescado blanco', s: 'pescado', k: 128, p: 26, c: 0, f: 2.7, tier: 2, raw: 1.25, kind: 'prot' },
+  atun: { n: 'Atún en agua (lata)', s: 'atún', k: 116, p: 26, c: 0, f: 1, tier: 2, raw: 1, kind: 'prot' },
+  huevo: { n: 'Huevo', s: 'huevo', k: 143, p: 12.6, c: 0.7, f: 9.5, tier: 1, raw: 1, kind: 'prot', unit: 50 },
+  higado: { n: 'Hígado de res', s: 'hígado de res', k: 175, p: 27, c: 4, f: 5, tier: 1, raw: 1.3, kind: 'prot' },
+  corazon: { n: 'Corazón de res', s: 'corazón de res', k: 165, p: 28, c: 0.1, f: 4.7, tier: 1, raw: 1.3, kind: 'prot' },
+  lenteja: { n: 'Lentejas cocidas', s: 'lentejas', k: 116, p: 9, c: 20, f: 0.4, tier: 1, raw: 0.4, kind: 'prot' },
+  frijol: { n: 'Fríjoles cocidos', s: 'fríjoles', k: 127, p: 8.7, c: 22.8, f: 0.5, tier: 1, raw: 0.4, kind: 'prot' },
+  whey: { n: 'Proteína whey (polvo)', s: 'whey', k: 400, p: 80, c: 8, f: 6, tier: 2, raw: 1, kind: 'supp' },
+  yogur: { n: 'Yogur griego natural', s: 'yogur griego', k: 59, p: 10, c: 3.6, f: 0.4, tier: 2, raw: 1, kind: 'dairy' },
+  leche: { n: 'Leche descremada', s: 'leche', k: 34, p: 3.4, c: 5, f: 0.1, tier: 1, raw: 1, kind: 'dairy' },
+  arroz: { n: 'Arroz cocido', s: 'arroz', k: 130, p: 2.7, c: 28, f: 0.3, tier: 1, raw: 0.4, kind: 'carb' },
+  papa: { n: 'Papa cocida', s: 'papa', k: 87, p: 1.9, c: 20, f: 0.1, tier: 1, raw: 1.1, kind: 'carb' },
+  platano: { n: 'Plátano maduro cocido', s: 'plátano', k: 122, p: 1, c: 32, f: 0.4, tier: 1, raw: 1.2, kind: 'carb' },
+  pasta: { n: 'Pasta cocida', s: 'pasta', k: 158, p: 5.8, c: 31, f: 0.9, tier: 1, raw: 0.45, kind: 'carb' },
+  avena: { n: 'Avena en hojuelas (seca)', s: 'avena', k: 389, p: 16.9, c: 66, f: 6.9, tier: 1, raw: 1, kind: 'carb' },
+  pan: { n: 'Pan integral', s: 'pan integral', k: 247, p: 13, c: 41, f: 3.4, tier: 1, raw: 1, kind: 'carb' },
+  arepa: { n: 'Arepa de maíz', s: 'arepa', k: 195, p: 4, c: 40, f: 1.5, tier: 1, raw: 1, kind: 'carb' },
+  banano: { n: 'Banano', s: 'banano', k: 89, p: 1.1, c: 23, f: 0.3, tier: 1, raw: 1, kind: 'carb' },
+  verduras: { n: 'Verduras mixtas', s: 'verduras', k: 30, p: 2, c: 6, f: 0.2, tier: 1, raw: 1.1, kind: 'veg' },
+  zuquini: { n: 'Zuquini', s: 'zuquini', k: 17, p: 1.2, c: 3.1, f: 0.3, tier: 1, raw: 1.1, kind: 'veg' },
+  aguacate: { n: 'Aguacate', s: 'aguacate', k: 160, p: 2, c: 9, f: 15, tier: 1, raw: 1, kind: 'fat', cap: 80 },
+  mani: { n: 'Maní', s: 'maní', k: 567, p: 26, c: 16, f: 49, tier: 1, raw: 1, kind: 'fat', cap: 20 },
+  aceite: { n: 'Aceite de oliva/vegetal', s: 'aceite', k: 884, p: 0, c: 0, f: 100, tier: 1, raw: 1, kind: 'fat', cap: 15 },
+};
+const MEAT = ['muslo', 'pechuga', 'molida', 'res', 'cerdo', 'pescado', 'atun', 'higado', 'corazon'];
+
+/* ---------- Cuestionario ---------- */
+export const QUESTIONS = [
+  { k: 'budget', req: true, q: '¿Cuál es tu presupuesto de comida?', opts: [['economico', '💸 Económico'], ['medio', '⚖️ Medio'], ['libre', '🥩 Sin límite']] },
+  { k: 'proteins', req: true, multi: true, q: '¿Qué proteínas comes o te gustan?', opts: [['pollo', 'Pollo'], ['molida', 'Carne molida'], ['res', 'Res'], ['cerdo', 'Cerdo'], ['pescado', 'Pescado'], ['atun', 'Atún'], ['huevo', 'Huevo'], ['visceras', 'Hígado/corazón'], ['legumbres', 'Lentejas/fríjol']] },
+  { k: 'cook', req: true, q: '¿Cuánto tiempo tienes para cocinar por comida?', opts: [['rapido', '⚡ ≤ 15 min'], ['medio', '⏱ ~30 min'], ['largo', '👨‍🍳 Sin prisa']] },
+  { k: 'fridge', req: true, q: '¿Desayunos y cenas listos en la nevera?', opts: [['si', '🧊 Sí, preparar y recalentar'], ['mixto', '🔀 Mixto'], ['no', '🍳 Cocino al momento']] },
+  { k: 'style', req: true, q: '¿Cómo prefieres organizarte?', opts: [['batch', 'Batch Cooking'], ['hibrido', 'Híbrido'], ['dia', 'Cocina al Día'], ['libres', 'Macros Libres']] },
+  { k: 'meals', req: true, q: '¿Cuántas comidas al día?', opts: [['3', '3'], ['4', '4'], ['5', '5']] },
+  { k: 'restrict', q: 'Restricciones (opcional)', multi: true, opts: [['ninguna', 'Ninguna'], ['lacteos', 'Sin lácteos'], ['gluten', 'Sin gluten'], ['vegetariano', 'Vegetariano']] },
+  { k: 'eatsout', q: '¿Comes corrientazo / en la calle? (opcional)', opts: [['si', 'Sí, seguido'], ['no', 'Casi nunca']] },
+  { k: 'supps', q: 'Suplementos (opcional)', multi: true, opts: [['whey', 'Whey'], ['creatina', 'Creatina'], ['ninguno', 'Ninguno']] },
+  { k: 'barriers', q: '¿Qué te hace fallar en la dieta? (opcional)', multi: true, opts: [['antojos', 'Antojos'], ['tiempo', 'Falta de tiempo'], ['fuera', 'Comer fuera'], ['cocinar', 'No sé cocinar'], ['dinero', 'Presupuesto'], ['hambre', 'Mucha hambre']] },
+];
+export const LABELS = { budget: 'presupuesto', proteins: 'proteínas', cook: 'tiempo de cocina', fridge: 'nevera', style: 'estilo', meals: 'comidas al día', restrict: 'restricciones', eatsout: 'comida en la calle', supps: 'suplementos', barriers: 'obstáculos' };
+export const STEPS = [['profile', 'Perfil y objetivo'], ['budget', 'Presupuesto'], ['proteins', 'Proteínas'], ['cook', 'Tiempo'], ['fridge', 'Nevera'], ['style', 'Estilo'], ['meals', 'Comidas']];
+
+const has = (v) => (Array.isArray(v) ? v.length > 0 : v !== undefined && v !== null && v !== '');
+/** Claves obligatorias que faltan, en orden de pregunta. */
+export function missing(prefs = {}, hasTarget = false) {
+  const out = [];
+  if (!hasTarget) out.push('profile');
+  for (const [k] of STEPS.slice(1)) if (!has(prefs[k])) out.push(k);
+  return out;
+}
+export const ready = (prefs, hasTarget) => missing(prefs, hasTarget).length === 0;
+
+const ASK = {
+  profile: 'Primero completa tu perfil (peso, altura, edad y objetivo) en la tarjeta de abajo: con eso calculo tus calorías y macros.',
+  budget: '¿Qué presupuesto manejas para la comida: económico, medio o sin límite? Con eso elijo cortes de carne y alimentos que rindan.',
+  proteins: '¿Qué proteínas comes o te gustan (pollo, carne molida, res, cerdo, pescado, atún, huevo, hígado/corazón, lentejas)? Dime también cuáles evitas.',
+  cook: '¿Cuánto tiempo tienes para cocinar por comida: ≤15 min, ~30 min o sin prisa?',
+  fridge: '¿Te sirve dejar desayunos y cenas listos en la nevera (overnight oats, pollo desmechado, bowls) para ganar rapidez?',
+  style: '¿Cómo prefieres organizarte: batch cooking, híbrido, cocinar al día o macros libres?',
+  meals: '¿Cuántas comidas haces al día: 3, 4 o 5?',
+};
+export const askFor = k => ASK[k] || '';
+
+export function greeting(prefs, hasTarget) {
+  if (ready(prefs, hasTarget)) return 'Tu perfil nutricional está completo. Abre «Tu Plan Nutricional» para ver tu estrategia, el menú de la semana y la lista de compras, o cuéntame qué quieres cambiar (presupuesto, proteínas, tiempo, nevera…).';
+  return 'Soy tu nutricionista de AGRESSIVE LIFT. Antes de abrir tu plan necesito saber cómo vas a cumplir tu objetivo: tu presupuesto (¿económico?), qué proteínas comes (pollo, carne molida, huevo, hígado…), cuánto tiempo tienes para cocinar, si quieres desayunos y cenas listos en la nevera, tu estilo (batch cooking, híbrido…) y cuántas comidas haces. Puedes responder escribiendo o con los botones de abajo.';
+}
+
+/* ---------- Interpretación de texto libre ---------- */
+const norm = t => String(t || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+const PROT_RX = { pollo: /pollo|pechuga|muslo/, molida: /molida/, res: /\bres\b|carne de res|bistec|sobrebarriga|churrasco|lomo de res/, cerdo: /cerdo|chuleta|costilla/, pescado: /pescado|tilapia|trucha|salmon|mojarra/, atun: /atun/, huevo: /huevo/, visceras: /higado|corazon|viscera|menudencia/, legumbres: /lenteja|frijol|garbanzo/ };
+/** Devuelve { prefs, changed:[claves] } sin mutar la entrada. */
+export function parse(text, prefs = {}) {
+  const t = norm(text), p = { ...prefs }, changed = new Set(), set = (k, v) => { if (JSON.stringify(p[k]) !== JSON.stringify(v)) { p[k] = v; changed.add(k); } };
+  if (/econom|barato|presupuesto (bajo|ajustado|limitado)|poca plata|ahorrar|no tengo mucha plata/.test(t)) set('budget', 'economico');
+  else if (/presupuesto medio|presupuesto normal/.test(t)) set('budget', 'medio');
+  else if (/sin limite|no importa el precio|presupuesto alto|lo que sea/.test(t)) set('budget', 'libre');
+  const prot = new Set(p.proteins || []);
+  t.split(/[.;\n]/).forEach(seg => {
+    const neg = /no como|no consumo|evito|no me gusta|sin (carne|pollo|res|cerdo|pescado|huevo|atun)/.test(seg);
+    for (const [k, rx] of Object.entries(PROT_RX)) if (rx.test(seg)) { neg ? prot.delete(k) : prot.add(k); }
+  });
+  if ([...prot].sort().join() !== [...(p.proteins || [])].sort().join()) set('proteins', [...prot]);
+  const mins = /(\d{1,3})\s*(min|minutos)/.exec(t);
+  if (mins) set('cook', +mins[1] <= 15 ? 'rapido' : +mins[1] <= 35 ? 'medio' : 'largo');
+  else if (/rapido|poco tiempo|sin tiempo|afan/.test(t)) set('cook', 'rapido');
+  else if (/con calma|me gusta cocinar|tengo tiempo/.test(t)) set('cook', 'largo');
+  if (/cocino al momento|fresco cada dia|no me sirve la nevera/.test(t)) set('fridge', 'no');
+  else if (/nevera|tupper|meal prep|overnight|dejar listo|recalent/.test(t)) set('fridge', 'si');
+  else if (/\bmixto\b/.test(t)) set('fridge', 'mixto');
+  if (/batch\s*cooking|cocinar.*semana|cocino.*semana/.test(t)) { set('style', 'batch'); if (!p.fridge) set('fridge', 'si'); }
+  else if (/cocina al dia|cocino.*diario|cada dia/.test(t)) set('style', 'dia');
+  else if (/hibrid/.test(t)) set('style', 'hibrido');
+  else if (/macros? libres|contar macros|flexible/.test(t)) set('style', 'libres');
+  const meals = /\b([3-5])\s*comidas/.exec(t); if (meals) set('meals', +meals[1]);
+  const rs = new Set(p.restrict || []);
+  if (/vegetarian/.test(t)) rs.add('vegetariano'); if (/sin lacteos|intoleran\w* a la lactosa|no (tomo|consumo) leche/.test(t)) rs.add('lacteos');
+  if (/celiac|sin gluten/.test(t)) rs.add('gluten'); if (/ninguna restriccion|como de todo|no tengo alergias/.test(t)) { rs.clear(); rs.add('ninguna'); }
+  if ([...rs].sort().join() !== [...(p.restrict || [])].sort().join()) set('restrict', [...rs]);
+  if (/corrientazo|calle|restaurante|domicilio|almuerzo ejecutivo/.test(t)) set('eatsout', 'si');
+  const ss = new Set(p.supps || []); if (/whey|proteina en polvo/.test(t)) ss.add('whey'); if (/creatina/.test(t)) ss.add('creatina'); if (/no uso suplementos|ningun suplemento/.test(t)) { ss.clear(); ss.add('ninguno'); }
+  if ([...ss].sort().join() !== [...(p.supps || []).sort()].join()) set('supps', [...ss]);
+  const bs = new Set(p.barriers || []);
+  [['antojos', /antojo|dulce/], ['tiempo', /sin tiempo|poco tiempo|trabajo mucho/], ['fuera', /comer fuera|salidas|corrientazo/], ['cocinar', /no se cocinar|no cocino/], ['dinero', /poca plata|sin plata|no me alcanza|presupuesto ajustado/], ['hambre', /hambre|ansiedad/]].forEach(([k, rx]) => rx.test(t) && bs.add(k));
+  if ([...bs].sort().join() !== [...(p.barriers || [])].sort().join()) set('barriers', [...bs]);
+  return { prefs: p, changed: [...changed] };
+}
+/** Respuesta de entrevista: reconoce lo entendido y pregunta lo siguiente. */
+export function interviewReply(changed, prefs, hasTarget) {
+  const m = missing(prefs, hasTarget), ack = changed.length ? `Anotado (${changed.map(k => LABELS[k] || k).join(', ')}). ` : '';
+  if (!m.length) return `${ack}¡Perfil completo! Ya puedes abrir «Tu Plan Nutricional»: te armé estrategia, menú semanal y lista de compras. Si quieres, aún puedes decirme restricciones, suplementos o qué te hace fallar (antojos, falta de tiempo…).`;
+  return `${ack}${ASK[m[0]]}${m.length > 1 ? ` (Me faltan ${m.length} datos.)` : ''}`;
+}
+
+/* ---------- Generador de menú ---------- */
+const m100 = (food, g) => ({ k: food.k * g / 100, p: food.p * g / 100, c: food.c * g / 100, f: food.f * g / 100 });
+const TPL = [
+  { id: 'd-oats', slot: 'desayuno', name: 'Overnight oats con proteína', prep: 'nevera', mins: 3, p: { food: 'whey' }, c: 'avena', fixed: [['leche', 200], ['banano', 100]], fat: 'mani', tags: ['dairy', 'whey'] },
+  { id: 'd-yogur', slot: 'desayuno', name: 'Bowl de yogur griego con avena y banano', prep: 'nevera', mins: 3, p: { food: 'yogur' }, c: 'avena', fixed: [['banano', 100]], fat: 'mani', tags: ['dairy'] },
+  { id: 'd-duros', slot: 'desayuno', name: 'Huevos duros con pan integral y fruta', prep: 'nevera', mins: 3, p: { food: 'huevo' }, c: 'pan', fixed: [['banano', 100]], fat: 'mani', tags: ['egg', 'gluten'] },
+  { id: 'd-calentado', slot: 'desayuno', name: 'Calentado: arroz, fríjol y huevo', prep: 'nevera', mins: 5, p: { food: 'huevo' }, c: 'arroz', fixed: [['frijol', 100]], fat: 'mani', tags: ['egg'] },
+  { id: 'd-arepa', slot: 'desayuno', name: 'Arepa con {P} desmechado', prep: 'nevera', mins: 4, p: { pool: true, only: ['muslo', 'pechuga', 'res', 'cerdo', 'molida'] }, c: 'arepa', fixed: [['banano', 100]], fat: 'mani', tags: [] },
+  { id: 'd-revueltos', slot: 'desayuno', name: 'Huevos revueltos con arepa y fruta', prep: 'cocinar', mins: 10, p: { food: 'huevo' }, c: 'arepa', fixed: [['banano', 100]], fat: 'aceite', tags: ['egg'] },
+  { id: 'd-tostadas', slot: 'desayuno', name: 'Tostadas con huevo y aguacate', prep: 'cocinar', mins: 10, p: { food: 'huevo' }, c: 'pan', fixed: [['aguacate', 50]], tags: ['egg', 'gluten'] },
+  { id: 'a-bowl', slot: 'almuerzo', name: 'Bowl de {P} con arroz y verduras', prep: 'nevera', mins: 4, p: { pool: true }, c: 'arroz', fixed: [['verduras', 150]], fat: 'aceite', tags: [] },
+  { id: 'a-papa', slot: 'almuerzo', name: '{P} con papa y ensalada', prep: 'nevera', mins: 4, p: { pool: true }, c: 'papa', fixed: [['verduras', 150]], fat: 'aceite', tags: [] },
+  { id: 'a-platano', slot: 'almuerzo', name: '{P} con plátano maduro y ensalada', prep: 'cocinar', mins: 25, p: { pool: true }, c: 'platano', fixed: [['verduras', 150]], fat: 'aceite', tags: [] },
+  { id: 'a-pasta', slot: 'almuerzo', name: 'Pasta con {P} y verduras', prep: 'cocinar', mins: 20, p: { pool: true }, c: 'pasta', fixed: [['verduras', 150]], fat: 'aceite', tags: ['gluten'] },
+  { id: 'a-corrientazo', slot: 'almuerzo', name: 'Corrientazo ajustado: {P}, arroz, fríjoles y ensalada', prep: 'fuera', mins: 0, p: { pool: true, only: ['muslo', 'pechuga', 'res', 'cerdo', 'molida', 'pescado'] }, c: 'arroz', fixed: [['frijol', 80], ['verduras', 100]], tags: [], needs: 'eatsout' },
+  { id: 'a-higado', slot: 'almuerzo', name: 'Hígado encebollado con arroz y verduras', prep: 'cocinar', mins: 20, p: { pool: true, only: ['higado'] }, c: 'arroz', fixed: [['verduras', 150]], fat: 'aceite', tags: [] },
+  { id: 'a-lentejas', slot: 'almuerzo', name: 'Lentejas con arroz y {P}', prep: 'nevera', mins: 4, p: { pool: true }, c: 'arroz', fixed: [['lenteja', 150], ['verduras', 100]], fat: 'aceite', tags: [], needs: 'legumbres' },
+  { id: 'a-lentejas-veg', slot: 'almuerzo', name: 'Lentejas con arroz y verduras', prep: 'nevera', mins: 4, p: { food: 'lenteja' }, c: 'arroz', fixed: [['verduras', 150]], fat: 'aceite', tags: [], needs: 'veg' },
+  { id: 'c-bowl', slot: 'cena', name: 'Bowl de {P}, arroz y vegetales salteados', prep: 'nevera', mins: 4, p: { pool: true }, c: 'arroz', fixed: [['verduras', 150]], fat: 'aceite', tags: [] },
+  { id: 'c-papa', slot: 'cena', name: '{P} con papa al horno y ensalada', prep: 'nevera', mins: 4, p: { pool: true }, c: 'papa', fixed: [['verduras', 150]], fat: 'aceite', tags: [] },
+  { id: 'c-salteado', slot: 'cena', name: 'Salteado rápido de {P} con verduras y arroz', prep: 'rapido', mins: 15, p: { pool: true }, c: 'arroz', fixed: [['verduras', 200]], fat: 'aceite', tags: [] },
+  { id: 'c-tortilla', slot: 'cena', name: 'Tortilla de huevos con verduras y papa', prep: 'rapido', mins: 12, p: { food: 'huevo' }, c: 'papa', fixed: [['verduras', 150]], fat: 'aceite', tags: ['egg'] },
+  { id: 'c-atun', slot: 'cena', name: 'Atún con arroz y ensalada', prep: 'rapido', mins: 5, p: { food: 'atun' }, c: 'arroz', fixed: [['verduras', 120]], fat: 'aceite', tags: [], needs: 'atun' },
+  { id: 'c-zuquini', slot: 'cena', name: 'Zuquini salteado con {P}', prep: 'rapido', mins: 15, p: { pool: true, only: ['corazon', 'higado', 'molida'] }, c: 'arroz', fixed: [['zuquini', 250]], fat: 'aceite', tags: [] },
+  { id: 's-yogur', slot: 'snack', name: 'Yogur griego con banano', prep: 'nevera', mins: 1, p: { food: 'yogur' }, c: 'banano', fixed: [], fat: 'mani', tags: ['dairy'] },
+  { id: 's-batido', slot: 'snack', name: 'Batido de whey con banano y leche', prep: 'rapido', mins: 3, p: { food: 'whey' }, c: 'banano', fixed: [['leche', 200]], fat: 'mani', tags: ['dairy', 'whey'] },
+  { id: 's-huevos', slot: 'snack', name: 'Huevos duros con fruta', prep: 'nevera', mins: 2, p: { food: 'huevo' }, c: 'banano', fixed: [], fat: 'mani', tags: ['egg'] },
+  { id: 's-atun', slot: 'snack', name: 'Atún con arepa', prep: 'rapido', mins: 3, p: { food: 'atun' }, c: 'arepa', fixed: [], fat: 'mani', tags: [], needs: 'atun' },
+  { id: 's-sandwich', slot: 'snack', name: 'Sándwich de {P} desmechado', prep: 'nevera', mins: 3, p: { pool: true, only: ['muslo', 'pechuga', 'atun', 'res', 'cerdo'] }, c: 'pan', fixed: [], fat: 'mani', tags: ['gluten'] },
+];
+const SLOTS = { 3: [['desayuno', .27], ['almuerzo', .38], ['cena', .35]], 4: [['desayuno', .25], ['almuerzo', .33], ['snack', .12], ['cena', .30]], 5: [['desayuno', .22], ['snack', .12], ['almuerzo', .30], ['snack', .10], ['cena', .26]] };
+const OPT2FOODS = { pollo: ['muslo', 'pechuga'], molida: ['molida'], res: ['res'], cerdo: ['cerdo'], pescado: ['pescado'], atun: ['atun'], huevo: ['huevo'], visceras: ['higado', 'corazon'], legumbres: ['lenteja', 'frijol'] };
+
+/** Pool de proteínas según gustos, presupuesto y restricciones. Devuelve { pool, excluded, added }. */
+export function proteinPool(prefs = {}) {
+  const maxTier = { economico: 1, medio: 2, libre: 3 }[prefs.budget] || 2, veg = (prefs.restrict || []).includes('vegetariano');
+  const chosen = (prefs.proteins || []).flatMap(o => OPT2FOODS[o] || []);
+  let want = chosen.filter(id => !(veg && MEAT.includes(id)));
+  const ok = want.filter(id => FOODS[id].tier <= maxTier), excluded = want.filter(id => FOODS[id].tier > maxTier);
+  let pool = [...ok], added = [];
+  const cheap = veg ? ['huevo', 'lenteja', 'frijol'] : ['muslo', 'huevo', 'corazon', 'lenteja', 'higado'];
+  for (const id of cheap) { if (pool.length >= 3) break; if (!pool.includes(id) && FOODS[id].tier <= maxTier && !(veg && MEAT.includes(id))) { pool.push(id); added.push(id); } }
+  pool.sort((a, b) => FOODS[a].tier - FOODS[b].tier);
+  return { pool, excluded, added };
+}
+
+function solve(tpl, pFood, cFood, T, pool) {
+  const P = FOODS[pFood], C = FOODS[cFood];
+  const fixed = tpl.fixed.map(([id, g]) => [id, g]);
+  const fx = fixed.reduce((a, [id, g]) => { const m = m100(FOODS[id], g); return { p: a.p + m.p, c: a.c + m.c, f: a.f + m.f }; }, { p: 0, c: 0, f: 0 });
+  const rp = T.p - fx.p, rc = T.c - fx.c, a = P.p / 100, b = C.p / 100, c1 = P.c / 100, d = C.c / 100, det = a * d - b * c1;
+  let gP, gC;
+  if (Math.abs(det) > 1e-6) { gP = (rp * d - b * rc) / det; gC = (a * rc - c1 * rp) / det; } else { gP = rp / a; gC = rc / d; }
+  if (gP < 0) { gP = 0; gC = rc / d; } if (gC < 0) { gC = 0; gP = rp / a; }
+  const cap = { prot: 320, supp: 60, dairy: 400 };
+  gP = Math.max(P.unit ? 50 : 20, Math.min(cap[P.kind] || 320, gP)); gC = Math.max(0, Math.min(cFood === 'avena' ? 120 : 420, gC));
+  const rnd = (food, g) => food.unit ? Math.max(1, Math.round(g / food.unit)) * food.unit : food.kind === 'supp' ? Math.round(g / 5) * 5 : Math.round(g / 5) * 5;
+  const items = [{ id: pFood, g: rnd(P, gP) }];
+  if (gC >= 5) items.push({ id: cFood, g: rnd(C, gC) });
+  fixed.forEach(([id, g]) => items.push({ id, g }));
+  let tot = items.reduce((a, it) => { const m = m100(FOODS[it.id], it.g); return { k: a.k + m.k, p: a.p + m.p, c: a.c + m.c, f: a.f + m.f }; }, { k: 0, p: 0, c: 0, f: 0 });
+  if (tpl.fat && T.f - tot.f > 3) {
+    const fd = FOODS[tpl.fat], g = Math.min(fd.cap || 15, Math.round((T.f - tot.f) / (fd.f / 100) / 5) * 5);
+    if (g >= 5) { items.push({ id: tpl.fat, g }); const m = m100(fd, g); tot = { k: tot.k + m.k, p: tot.p + m.p, c: tot.c + m.c, f: tot.f + m.f }; }
+  }
+  return { items, tot };
+}
+const label = it => { const f = FOODS[it.id]; return f.unit ? `${it.g / f.unit} ${it.g / f.unit === 1 ? 'huevo' : 'huevos'} (${it.g} g)` : `${it.g} g ${f.n.toLowerCase().replace(' (polvo)', '').replace(' (seca)', '').replace(' (lata)', '')}`; };
+
+/** Menú de 7 días. target = {kcal,p,c,f} base; seed rota las variantes. */
+export function generateMenu(target, prefs = {}, seed = 0) {
+  const meals = +prefs.meals || 3, slots = SLOTS[meals] || SLOTS[3], { pool, excluded, added } = proteinPool(prefs);
+  const rs = prefs.restrict || [], noDairy = rs.includes('lacteos') || false, noGluten = rs.includes('gluten'), whey = (prefs.supps || []).includes('whey');
+  const eggOK = (prefs.proteins || []).includes('huevo') || !(prefs.proteins || []).length, atunOK = (prefs.proteins || []).includes('atun');
+  const fridge = prefs.fridge || 'mixto', cookMax = { rapido: 15, medio: 30, largo: 999 }[prefs.cook] || 999, batch = prefs.style === 'batch';
+  const veg = rs.includes('vegetariano');
+  // Pool genérico: sin huevo/hígado/legumbres como proteína principal (cantidades poco realistas); solo si la plantilla lo pide o no hay otra.
+  const poolFor = t => { const f = (list) => list.filter(id => (!t.p.only || t.p.only.includes(id)) && !(t.p.not || []).includes(id)); const base = f(pool.filter(id => !['huevo', 'higado', 'lenteja', 'frijol'].includes(id) || (t.p.only || []).includes(id))); return base.length || t.p.only ? base : f(pool); };
+  const allow = t => {
+    if (t.tags.includes('dairy') && noDairy) return false; if (t.tags.includes('gluten') && noGluten) return false;
+    if (t.tags.includes('whey') && !whey) return false; if (t.tags.includes('egg') && !eggOK) return false;
+    if (t.needs === 'eatsout' && prefs.eatsout !== 'si') return false; if (t.needs === 'atun' && !atunOK) return false;
+    if (t.needs === 'legumbres' && !(prefs.proteins || []).includes('legumbres')) return false; if (t.needs === 'veg' && !veg) return false;
+    if (t.p.pool && !poolFor(t).length) return false;
+    return true;
+  };
+  const pick = slot => {
+    let list = TPL.filter(t => t.slot === slot && allow(t));
+    const step = (fn) => { const l = list.filter(fn); if (l.length) list = l; };
+    step(t => t.prep === 'fuera' || t.mins <= cookMax || t.prep === 'nevera');
+    if ((fridge === 'si') && (slot === 'desayuno' || slot === 'cena' || slot === 'snack')) step(t => t.prep === 'nevera');
+    else if (fridge === 'no') step(t => t.prep !== 'nevera');
+    return list;
+  };
+  const days = [];
+  for (let d = 0; d < 7; d++) {
+    const dayMeals = slots.map(([slot, fr], si) => {
+      const list = pick(slot); if (!list.length) return null;
+      const blocked = (fridge === 'si' && ['desayuno', 'cena', 'snack'].includes(slot)) || (batch && slot !== 'snack'), bi = blocked ? (d < 3 ? 0 : 1) : d;
+      const tpl = list[(bi + seed + si) % list.length];
+      let pf = tpl.p.food;
+      if (tpl.p.pool) { const p = poolFor(tpl); pf = p[(bi + seed * 2 + si) % p.length]; }
+      const T = { p: target.p * fr, c: target.c * fr, f: target.f * fr };
+      const { items, tot } = solve(tpl, pf, tpl.c, T, pool);
+      return { slot, id: tpl.id, name: (n => n.charAt(0).toUpperCase() + n.slice(1))(tpl.name.replace('{P}', FOODS[pf].s)), prep: tpl.prep, mins: tpl.mins, items: items.map(it => ({ id: it.id, g: it.g, text: label(it) })), k: Math.round(tot.k), p: Math.round(tot.p), c: Math.round(tot.c), f: Math.round(tot.f) };
+    }).filter(Boolean);
+    days.push(dayMeals);
+  }
+  const notes = [];
+  if (excluded.length) notes.push(`Por presupuesto dejé fuera: ${[...new Set(excluded.map(id => FOODS[id].s))].join(', ')}.`);
+  if (added.length) notes.push(`Añadí opciones económicas para dar variedad: ${added.map(id => FOODS[id].s).join(', ')}.`);
+  return { days, notes, prep: prepPlan(days) };
+}
+/** Plan de cocina de domingo: recetas "de nevera" distintas de la semana. */
+function prepPlan(days) {
+  const seen = new Map();
+  days.forEach((ms, d) => ms.forEach(m => { if (m.prep === 'nevera') { const key = m.slot + '|' + m.name; if (!seen.has(key)) seen.set(key, { m, days: [] }); seen.get(key).days.push(d); } }));
+  const D = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+  return [...seen.values()].map(({ m, days }) => `${m.name} → ${days.map(i => D[i]).join(', ')} (${m.slot})`);
+}
+/** Lista de compras (peso crudo aproximado). */
+export function groceries(menu) {
+  const tot = {};
+  menu.days.forEach(ms => ms.forEach(m => m.items.forEach(it => { tot[it.id] = (tot[it.id] || 0) + it.g * (FOODS[it.id].raw || 1); })));
+  return Object.entries(tot).map(([id, g]) => {
+    const f = FOODS[id], rounded = Math.ceil(g / 50) * 50;
+    return { id, group: f.kind, n: f.unit ? `${f.n}` : f.n, amount: f.unit ? `${Math.ceil(g / f.unit)} huevos` : rounded >= 1000 ? `${(rounded / 1000).toFixed(rounded % 1000 ? 2 : 0).replace(/0$/, '')} kg` : `${rounded} g`, tier: f.tier };
+  }).sort((a, b) => ['prot', 'supp', 'dairy', 'carb', 'veg', 'fat'].indexOf(a.group) - ['prot', 'supp', 'dairy', 'carb', 'veg', 'fat'].indexOf(b.group));
+}
+
+/* ---------- Estrategia personalizada ---------- */
+export function strategy({ target, prefs = {}, goal = 'maint', trainDays = 3 }) {
+  const out = [], meals = +prefs.meals || 3, perMeal = Math.round(target.p / meals);
+  out.push({ cut: `Definición: déficit moderado (≈20 %) con proteína alta (${target.p} g). Ritmo objetivo: perder ~0.5–0.7 % del peso por semana; si tu peso no se mueve 2 semanas, la auditoría ajusta hasta 250 kcal.`,
+    maint: `Mantenimiento: ${target.kcal} kcal estables; usa el peso semanal solo para detectar derivas.`, bulk: `Volumen limpio (+10 %): sube ~0.25 % del peso por semana; si subes más rápido, es grasa y la auditoría recorta calorías.` }[goal]);
+  out.push(`Reparte ${target.p} g de proteína en ${meals} comidas (≈${perMeal} g cada una). Esa es la clave para conservar/ganar músculo.`);
+  if (prefs.budget === 'economico') out.push('Presupuesto económico: tu base son huevo, muslo de pollo, hígado/corazón de res, lentejas, fríjoles, arroz y papa — las proteínas más baratas por gramo. Compra la carne en bandeja grande, porciónala y congela.');
+  else if (prefs.budget === 'medio') out.push('Presupuesto medio: alterna pechuga, carne molida y pescado con huevo y legumbres para equilibrar costo y variedad.');
+  else if (prefs.budget === 'libre') out.push('Sin límite de presupuesto: prioriza cortes magros (pechuga, res magra, pescado) para ajustar grasa con precisión.');
+  if (prefs.fridge === 'si' || prefs.style === 'batch') out.push('Nevera: cocina 1–2 veces por semana (p. ej. domingo y miércoles) y deja desayunos/cenas en recipientes. Carne y arroz cocidos duran 3–4 días refrigerados; congela lo que pasa de ese día.');
+  else if (prefs.fridge === 'mixto') out.push('Mixto: deja listos solo desayuno y una cena (overnight oats, pollo desmechado) y cocina fresco el almuerzo.');
+  if (prefs.cook === 'rapido') out.push('Poco tiempo: el menú prioriza comidas de ≤15 min o recalentables en 3–5 min.');
+  if (prefs.eatsout === 'si') out.push('Corrientazo: pide la proteína doble, arroz a la mitad, fríjoles o ensalada extra, y cambia el jugo azucarado por agua. Regístralo como estimación.');
+  const B = { antojos: 'Antojos: deja 150–200 kcal libres al día (banano con yogur o una porción pequeña de lo que se te antoja) en vez de prohibírtelo.', tiempo: 'Falta de tiempo: congela porciones sueltas y ten siempre atún, huevos y yogur como plan B de 5 minutos.', fuera: 'Comer fuera: decide la comida antes de llegar y pide proteína + verdura primero.', cocinar: 'No sabes cocinar: empieza con 2 recetas base (bowl de pollo con arroz y huevos revueltos) y repítelas dos semanas.', dinero: 'Dinero: planifica con la lista de compras de abajo y evita comprar por impulso.', hambre: 'Mucha hambre: sube verduras y fruta (volumen), toma agua y deja la proteína en cada comida.' };
+  (prefs.barriers || []).forEach(k => B[k] && out.push(B[k]));
+  if ((prefs.supps || []).includes('whey')) out.push('Whey: úsalo para completar proteína (snack o desayuno); no reemplaza comida real.');
+  if ((prefs.supps || []).includes('creatina')) out.push('Creatina: 3–5 g al día, cualquier hora; toma suficiente agua.');
+  out.push(`Entrenas ${trainDays} días/semana: pon la comida con más carbohidrato 1–2 h antes de entrenar y proteína en las 2 h posteriores.`);
+  return out;
+}
