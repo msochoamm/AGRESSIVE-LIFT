@@ -15,7 +15,6 @@
 </head>
 <body>
 <div id="app"><div style="padding:30vh 16px 0;text-align:center;color:#ff2b57;font-size:22px">Cargando…</div></div>
-<audio id="player" preload="none"></audio>
 <script>
 /* Si la app no arranca, muestra el motivo en pantalla en vez de dejarla en negro. */
 function fail(m){if(window.__ok)return;document.getElementById('app').innerHTML='<div style="padding:25vh 16px 0;text-align:center;color:#ff2b57;font-size:22px">No se pudo iniciar<br><small style="color:#a1a1aa;font-size:14px">'+String(m).replace(/</g,'&lt;')+'</small></div>'}

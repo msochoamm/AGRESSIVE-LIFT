@@ -68,25 +68,39 @@ const MUSCLES = {
   gluteos: { n: 'Glúteos', mev: 0, mrv: 16 }, gemelos: { n: 'Gemelos', mev: 8, mrv: 20 },
 };
 const ALL = Object.values(PROGRAM).flat();
-const MAP = { Pecho: 'pecho', Hombro: 'hombros', 'Deltoide post.': 'hombros', 'Tríceps': 'triceps', Dorsal: 'espalda', Espalda: 'espalda',
+const MAP = { Core: 'core', Pecho: 'pecho', Hombro: 'hombros', 'Deltoide post.': 'hombros', 'Tríceps': 'triceps', Dorsal: 'espalda', Espalda: 'espalda',
   'Bíceps': 'biceps', 'Cuádriceps': 'cuads', Isquios: 'isquios', 'Glúteo': 'gluteos', Gemelo: 'gemelos' };
 const dAdd = n => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
 // Series de la última semana por grupo (para respetar el MRV en tiempo real).
-const weekDone = k => ALL.filter(e => MAP[e.m] === k).reduce((n, e) => n + (S.logs[e.id] || []).filter(x => (Date.now() - new Date(x.d)) / 864e5 < 7).length, 0);
+const weekDone = k => [...ALL, ...Object.values(CEX)].filter(e => MAP[e.m] === k).reduce((n, e) => n + (S.logs[e.id] || []).filter(x => (Date.now() - new Date(x.d)) / 864e5 < 7).length, 0);
+// Catálogo: SIEMPRE 2 ejercicios por músculo (principal + complementario).
+const CATALOG = {
+  pecho: ['Press inclinado con mancuernas 4×8-10', 'Aperturas en polea 3×12-15'],
+  espalda: ['Jalón al pecho 4×8-12', 'Remo con apoyo pectoral 4×8-12'],
+  hombros: ['Press militar en máquina 3×8-10', 'Elevaciones laterales en polea 4×12-15'],
+  biceps: ['Curl inclinado con mancuernas 3×10-12', 'Curl predicador 3×10-12'],
+  triceps: ['Extensión de tríceps en polea 3×10-12', 'Press francés con barra Z 3×8-10'],
+  core: ['Crunch en polea 3×12-15', 'Elevación de piernas colgado 3×10-15'],
+  cuads: ['Prensa de piernas 4×8-12', 'Extensión de cuádriceps 3×12-15'],
+  isquios: ['Curl femoral sentado 4×8-12', 'Peso muerto rumano 3×8-10'],
+  gluteos: ['Hip thrust 4×8-12', 'Sentadilla búlgara 3×8-10'],
+  gemelos: ['Gemelo de pie 4×10-15', 'Gemelo sentado 3×12-20'],
+};
+const PRESETS = { Push: ['pecho', 'hombros', 'triceps'], Pull: ['espalda', 'biceps'], Piernas: ['cuads', 'isquios', 'gluteos', 'gemelos'] };
+const LABEL = { pecho: 'Pecho', espalda: 'Espalda', hombros: 'Hombro', biceps: 'Bíceps', triceps: 'Tríceps', core: 'Core', cuads: 'Cuádriceps', isquios: 'Isquios', gluteos: 'Glúteo', gemelos: 'Gemelo' };
+const clean = n => n.replace(/\s*\d+\s*[x×]\s*[\d-]+.*$/i, '').trim();
+const slug = n => n.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+const CEX = {}; // ejercicios del catálogo con id estable (para registrar series y autorregulación)
+Object.entries(CATALOG).forEach(([k, l]) => l.forEach((full, i) => { const n = clean(full); CEX['c-' + slug(n)] = { id: 'c-' + slug(n), n, m: LABEL[k], k, alt: [clean(l[1 - i])] }; }));
+const exById = id => CEX[id] || ALL.find(e => e.id === id);
+const exByName = name => { const t = slug(clean(name)); return Object.values(CEX).find(e => slug(e.n) === t) || ALL.find(e => slug(e.n) === t); };
+const videoUrl = name => 'https://www.youtube.com/results?search_query=' + encodeURIComponent('cómo hacer ' + clean(name) + ' técnica correcta');
 const STYLES = {
   batch: ['Batch Cooking', 'Cocinas 1-2 días y porcionas la semana.'],
   dia: ['Cocina al Día', 'Cocinas fresco cada día; más flexible.'],
   hibrido: ['Híbrido', 'Base en batch + comidas frescas.'],
   libres: ['Macros Libres', 'Cualquier comida, solo cierras macros.'],
 };
-// Sets exclusivos: reemplaza los enlaces por los reales del creador.
-const SETS = [
-  { t: 'Hardtek Session #01', d: 'Tekno · 90 min', url: 'https://soundcloud.com/' },
-  { t: 'Raw Tekno Gym Mix', d: 'Hardtek · 60 min', url: 'https://www.youtube.com/' },
-  { t: 'Free Party Warm-up', d: 'Tekno · 75 min', url: 'https://soundcloud.com/' },
-];
-// Pistas propias (opcional) para que la Media Session controle audio que reproduce la propia app.
-const TRACKS = [{ title: 'Pista 1', artist: 'AGRESSIVE LIFT', src: '' }];
 
 /* ---------- Estado ---------- */
 if (!store.get('meso')) store.set('meso', { start: Date.now(), weeks: 8 });
@@ -106,11 +120,11 @@ const S = {
   trainingSchedule: savedTrainingSchedule || DEFAULT_TRAINING_SCHEDULE,
   trainingConfigured: savedTrainingConfigured,
   trainingPreferences: store.get('trainingPreferences', {}),
-  trainingSectionTab: 'coach',
+  trainingSectionTab: 'routine',
   nutritionSectionTab: 'chat',
   muscleSide: 'front',
   routineDate: today(),
-  routineEdits: store.get('routineEdits', {}),
+  routineEdits: store.get('routineEdits', {}), dayMuscles: store.get('dayMuscles', {}),
   routineModal: null,
   nutritionPreferences: store.get('nutritionPreferences', {}),
   nutritionChat: freshNutritionChat,
@@ -380,6 +394,16 @@ const routineDayPicker = () => {
   </div>`;
 };
 
+const recentWarn = k => { for (const off of [-1, -2]) if ((S.dayMuscles[shiftIsoDate(S.routineDate, off)] || []).includes(k)) return -off; return 0; };
+const dayBuilder = () => {
+  const sel = S.dayMuscles[S.routineDate] || [];
+  return `<div class="card">
+  <div class="font-bold mb-1">¿Qué entrenas este día?</div>
+  <div class="text-xs text-zinc-500 mb-2">Elige el día arriba y marca los músculos: te armo 2 ejercicios por músculo.</div>
+  <div class="flex gap-2 mb-2">${Object.keys(PRESETS).map(p => `<button class="chip flex-1" data-act="daypreset" data-p="${p}">${p}</button>`).join('')}</div>
+  <div class="grid grid-cols-2 gap-2">${Object.keys(MUSCLES).map(k => { const w = recentWarn(k); return `<button class="chip ${sel.includes(k) ? 'on' : ''}" data-act="daymuscle" data-k="${k}">${MUSCLES[k].n}${w ? ` <span class="text-xs neon">⚠ hace ${w} d</span>` : ''}</button>`; }).join('')}</div>
+  <button class="btn fill w-full mt-3" data-act="daygenerate">Generar rutina (${sel.length * 2} ejercicios)</button></div>`;
+};
 const routineDayPanel = () => {
   const session = routineSessionForDate(S.routineDate);
   const exercises = routineExercisesForDate(S.routineDate);
@@ -398,24 +422,26 @@ const routineDayPanel = () => {
   </div>`;
 };
 
+const loggingCards = () => {
+  const cards = routineExercisesForDate(S.routineDate).map(exByName).filter(Boolean);
+  if (!cards.length) return '';
+  return `<div class="plan-title mt-3">Registrar series</div>${S.focus.length ? `<div class="text-xs text-zinc-500 mb-2">Enfoque semanal: ${S.focus.map(k => MUSCLES[k].n).join(' + ')}</div>` : ''}
+  ${cards.map(exCard).join('')}
+  <div class="text-xs text-zinc-600 mt-2">Semana ${mesoWeek()} de ${S.meso.weeks}: mantén los mismos ejercicios y sube carga o reps. <button class="underline" data-act="weeks">${S.meso.weeks} semanas (cambiar)</button> · <button class="underline" data-act="newmeso">reiniciar</button></div>`;
+};
 const trainingRoutinePanel = () => `<div class="routine-panel">
-  ${!S.trainingConfigured ? '<div class="card text-sm text-zinc-400">Configura primero tu frecuencia y división desde Entrenador IA.</div>' : ''}
+  
   <div class="plan-title">${S.trainingSchedule.days} días · ${esc(S.trainingSchedule.split)}</div>
   ${routineDayPicker()}
+  ${dayBuilder()}
   ${routineDayPanel()}
   <div class="training-top">${calendarCard()}</div>
-  ${S.trainingConfigured && routineSessionForDate(S.routineDate) ? `
-  <div class="training-block">
-    <div class="flex gap-2 mb-3">${['push', 'pull', 'legs'].map(t => `<button class="chip flex-1 ${S.tab === t ? 'on' : ''}" data-act="tab" data-t="${t}">${t.toUpperCase()}</button>`).join('')}</div>
-    ${S.focus.length ? `<div class="text-xs text-zinc-500 mb-2">Enfoque semanal: ${S.focus.map(k => MUSCLES[k].n).join(' + ')}</div>` : ''}
-  </div>
-  ${PROGRAM[S.tab].map(exCard).join('')}
-  <div class="text-xs text-zinc-600 mt-2">Semana ${mesoWeek()}: mantén los mismos ejercicios y sube carga o reps cada semana. Mesociclo: <button class="underline" data-act="weeks">${S.meso.weeks} semanas (cambiar)</button> · <button class="underline" data-act="newmeso">reiniciar</button></div>` : S.trainingConfigured && !routineExercisesForDate(S.routineDate).length ? '<div class="card text-sm text-zinc-500">Descanso programado · añade ejercicios si quieres crear una sesión personalizada.</div>' : ''}
+  ${loggingCards()}
 </div>`;
 
 const trainView = () => `<div class="section-subtabs" role="tablist" aria-label="Sección Entrenar">
   <button class="chip ${S.trainingSectionTab === 'coach' ? 'on' : ''}" role="tab" aria-selected="${S.trainingSectionTab === 'coach'}" data-act="traintab" data-tab="coach">💬 Entrenador IA</button>
-  <button class="chip ${S.trainingSectionTab === 'routine' ? 'on' : ''}" role="tab" aria-selected="${S.trainingSectionTab === 'routine'}" data-act="traintab" data-tab="routine" ${S.trainingConfigured ? '' : 'disabled'}>📋 Tu Rutina</button>
+  <button class="chip ${S.trainingSectionTab === 'routine' ? 'on' : ''}" role="tab" aria-selected="${S.trainingSectionTab === 'routine'}" data-act="traintab" data-tab="routine" >📋 Tu Rutina</button>
 </div>
 ${S.trainingSectionTab === 'coach' ? coachPanel() : trainingRoutinePanel()}`;
 
@@ -471,7 +497,33 @@ function toggleMuscle(k) {
   else { S.focus.push(k); if (S.focus.length > 2) S.focus.shift(); }
   store.set('focus', S.focus);
 }
-const muscleRegion = (key, path, label) => `<g class="muscle-region ${S.focus.includes(key) ? 'on' : ''}" data-act="muscle" data-k="${key}" aria-label="Priorizar ${label}" role="button" tabindex="0"><path d="${path}"/><path transform="translate(320 0) scale(-1 1)" d="${path}"/></g>`;
+const muscleRegion = (key, paths, label) => `<g class="muscle-region ${S.focus.includes(key) ? 'on' : ''}" data-act="muscle" data-k="${key}" aria-label="Priorizar ${label}" role="button" tabindex="0">${[].concat(paths).map(d => `<path d="${d}"/><path transform="translate(320 0) scale(-1 1)" d="${d}"/>`).join('')}</g>`;
+const mir = (d, c = 'body-detail') => `<path class="${c}" d="${d}"/><path class="${c}" transform="translate(320 0) scale(-1 1)" d="${d}"/>`;
+const BODY = 'M160 62 C168 62 172 66 172 74 L174 84 C190 88 206 90 216 96 C230 100 240 114 242 134 L246 170 C250 196 252 214 252 232 L258 268 C262 286 266 300 268 316 L270 330 C262 336 254 334 252 326 L246 300 L238 262 L232 232 C230 210 226 188 220 170 L214 150 C204 176 198 200 198 232 C198 246 196 256 198 268 C206 290 210 320 208 350 C208 380 206 400 202 420 C204 446 206 480 204 510 L206 536 C206 544 196 548 186 548 L172 548 C168 540 170 520 170 500 C170 470 168 440 168 420 C164 380 162 340 162 308 L160 296 Z';
+const bodySvg = () => {
+  const f = S.muscleSide === 'front';
+  return `<svg viewBox="0 0 320 560" class="muscle-svg" role="group" aria-label="Anatomía ${f ? 'frontal' : 'dorsal'}; selecciona un grupo muscular">
+  <defs><linearGradient id="metal-body" x1="0" x2="1"><stop stop-color="#14171b"/><stop offset=".5" stop-color="#2b3138"/><stop offset="1" stop-color="#14171b"/></linearGradient></defs>
+  <ellipse class="body-silhouette" cx="160" cy="36" rx="19" ry="25"/>${mir(BODY, 'body-silhouette')}
+  ${f ? `
+    ${muscleRegion('hombros', 'M206 108 L216 96 C230 99 241 112 243 134 C243 146 238 156 229 159 C222 158 216 153 212 146 Z', 'hombros')}
+    ${muscleRegion('pecho', 'M160 100 C176 98 192 101 206 108 L212 146 C210 158 204 168 194 172 C180 176 168 174 160 168 Z', 'pecho')}
+    ${muscleRegion('biceps', 'M218 158 C226 162 238 162 245 156 L249 174 C252 192 252 210 252 226 L232 226 C231 206 226 186 218 170 Z', 'bíceps')}
+    ${muscleRegion('core', ['M160 172 C170 174 180 174 186 172 L190 204 C192 232 190 252 186 270 L160 278 Z', 'M190 176 C196 194 199 222 197 246 L195 268 L190 270 C192 250 194 226 192 204 Z'], 'core')}
+    ${muscleRegion('cuads', 'M164 300 C180 292 200 294 207 306 C211 340 209 382 203 412 C194 424 178 424 170 412 C165 380 163 340 164 300 Z', 'cuádriceps')}
+    ${muscleRegion('gemelos', 'M170 430 C180 426 196 428 202 436 C204 470 204 500 200 520 C192 528 178 526 172 516 C168 490 168 460 170 430 Z', 'gemelos')}
+    ${mir('M162 98 C176 94 192 96 208 104 M160 196 L184 196 M160 220 L186 220 M160 244 L187 244 M190 316 C192 350 190 384 186 410 M170 414 C180 420 192 420 202 412')}
+  ` : `
+    ${muscleRegion('espalda', ['M178 140 L212 150 C212 184 204 226 190 246 L162 246 L162 176 Z', 'M160 68 C172 72 182 84 214 98 C204 118 184 138 160 172 Z', 'M162 248 L190 248 C192 258 192 266 190 274 L162 274 Z'], 'espalda')}
+    ${muscleRegion('hombros', 'M214 98 C230 99 241 112 243 134 C243 146 238 156 229 159 C220 158 212 148 208 136 C206 120 208 108 214 98 Z', 'hombros')}
+    ${muscleRegion('triceps', 'M218 158 C226 164 238 164 245 156 L249 174 C252 192 252 210 252 226 L232 226 C231 206 226 186 218 170 Z', 'tríceps')}
+    ${muscleRegion('gluteos', 'M162 278 C176 272 196 274 204 288 C208 302 204 320 196 328 C182 334 168 330 162 322 Z', 'glúteos')}
+    ${muscleRegion('isquios', 'M164 336 C178 338 194 336 204 332 C208 364 206 398 202 418 C192 428 178 428 170 418 C166 392 164 360 164 336 Z', 'isquios')}
+    ${muscleRegion('gemelos', 'M170 432 C182 426 198 430 203 440 C206 470 204 500 200 520 C192 530 178 528 172 516 C168 490 168 460 170 432 Z', 'gemelos')}
+    ${mir('M160 70 L160 276 M166 132 C180 128 194 134 198 146 M162 326 C176 332 192 330 204 324')}
+  `}
+  </svg>`;
+};
 const mapView = () => `
 <div class="card map-panel">
   <div class="flex justify-between items-center mb-2">
@@ -483,28 +535,7 @@ const mapView = () => `
     <button class="chip ${S.muscleSide === 'back' ? 'on' : ''}" role="tab" aria-selected="${S.muscleSide === 'back'}" data-act="muscleside" data-side="back">Espalda</button>
   </div>
   <div class="muscle-svg-wrap">
-    <svg viewBox="0 0 320 580" class="muscle-svg" role="group" aria-label="Anatomía ${S.muscleSide === 'front' ? 'frontal' : 'dorsal'}; selecciona un grupo muscular">
-      <defs><linearGradient id="metal-body" x1="0" x2="1" y1="0" y2="1"><stop stop-color="#1b1e22"/><stop offset=".48" stop-color="#505760"/><stop offset="1" stop-color="#1b1e22"/></linearGradient></defs>
-      <ellipse class="body-silhouette" cx="160" cy="40" rx="23" ry="29"/>
-      <path class="body-silhouette" d="M160 69 C151 76 148 87 148 98 C136 99 126 105 116 115 C103 108 89 106 75 108 C61 110 53 124 51 144 L43 211 C42 224 46 231 54 232 C62 233 67 227 69 216 L79 159 L83 214 C85 237 96 254 113 265 L114 292 C108 317 107 342 112 364 L106 416 L112 486 L118 550 C119 562 127 569 138 567 C147 565 149 558 147 547 L140 470 L142 416 L159 350 L160 324 Z M160 69 C169 76 172 87 172 98 C184 99 194 105 204 115 C217 108 231 106 245 108 C259 110 267 124 269 144 L277 211 C278 224 274 231 266 232 C258 233 253 227 251 216 L241 159 L237 214 C235 237 224 254 207 265 L206 292 C212 317 213 342 208 364 L214 416 L208 486 L202 550 C201 562 193 569 182 567 C173 565 171 558 173 547 L180 470 L178 416 L161 350 L160 324 Z"/>
-      <path class="body-detail" d="M160 101 L160 285 M128 112 Q160 127 192 112 M112 264 Q160 282 208 264 M119 365 Q160 377 201 365 M145 416 L160 350 L175 416"/>
-      ${S.muscleSide === 'front' ? `
-        ${muscleRegion('hombros','M160 103 C145 101 129 104 116 115 C116 131 129 145 148 147 L160 137 Z','hombros')}
-        ${muscleRegion('pecho','M160 126 C143 119 125 120 111 129 C113 151 130 170 159 178 Z','pecho')}
-        ${muscleRegion('biceps','M115 145 C101 150 96 167 101 187 L109 211 C120 214 131 206 134 193 L132 157 Z','bíceps')}
-        ${muscleRegion('core','M160 181 C148 179 135 181 127 186 L126 267 C137 273 149 274 160 270 Z','core')}
-        <path class="body-detail" d="M128 197 Q144 193 159 198 M127 219 Q144 215 159 220 M127 241 Q144 237 159 242"/><path class="body-detail" transform="translate(320 0) scale(-1 1)" d="M128 197 Q144 193 159 198 M127 219 Q144 215 159 220 M127 241 Q144 237 159 242"/>
-        ${muscleRegion('cuads','M160 291 C144 287 127 291 115 299 C111 324 112 365 118 400 C130 408 147 405 157 393 Z','cuádriceps')}
-        ${muscleRegion('gemelos','M160 421 C147 417 136 423 132 438 L138 512 C145 524 155 526 160 518 Z','gemelos')}
-      ` : `
-        ${muscleRegion('hombros','M160 103 C145 101 129 104 116 115 C116 131 129 145 148 147 L160 137 Z','hombros')}
-        ${muscleRegion('espalda','M160 126 C143 119 126 122 113 132 L117 233 C127 250 145 258 160 254 Z','espalda')}
-        ${muscleRegion('triceps','M115 145 C102 149 97 165 100 186 L106 216 C116 220 127 212 131 198 L130 158 Z','tríceps')}
-        ${muscleRegion('gluteos','M160 254 C145 250 128 254 115 265 L115 291 C128 303 146 305 160 297 Z','glúteos')}
-        ${muscleRegion('isquios','M160 300 C145 297 129 300 118 307 C114 331 115 367 120 397 C132 405 148 402 158 390 Z','isquios')}
-        ${muscleRegion('gemelos','M160 421 C147 417 136 423 132 438 L138 512 C145 524 155 526 160 518 Z','gemelos')}
-      `}
-    </svg>
+    ${bodySvg()}
   </div>
 </div>
 <div class="card">
@@ -551,45 +582,19 @@ const sheet = () => {
       <path class="motion-arrow" d="M218 78 V45 M212 52 L218 44 L224 52"/>
     </svg></div>
     <p class="text-sm text-zinc-400 mt-2">Controla la fase de bajada, mantén la trayectoria estable y termina cada repetición sin perder la postura.</p>
+    <a class="btn fill w-full mt-3" href="${videoUrl(m.name)}" target="_blank" rel="noopener">▶ Ver video real en YouTube ↗</a>
     <button class="btn ghost w-full mt-3" data-act="closemodal">Cerrar</button>
   </div></div>`;
   return '';
 };
 
-const waze = () => {
-  const t = TRACKS[S.trk], liked = S.likes.includes(t.title);
-  return `<div class="waze">
-  ${S.setsOpen ? `<div class="mb-2 max-h-48 overflow-auto">${SETS.map(s => `<a class="card block !mb-2" href="${s.url}" target="_blank" rel="noopener"><div class="font-bold">${esc(s.t)}</div><div class="text-xs text-zinc-500">${esc(s.d)} · abrir ↗</div></a>`).join('')}</div>` : ''}
-  <div class="flex items-center justify-between gap-1">
-    <div class="min-w-0 flex-1" data-act="sets"><div class="font-bold truncate">${esc(t.title)}</div><div class="text-xs neon">${S.setsOpen ? '▾' : '▴'} Tekno / Hardtek</div></div>
-    <button class="btn ghost !px-2" data-act="like" aria-label="Me gusta">${liked ? '❤️' : '🤍'}</button>
-    <button class="btn ghost !px-2" data-act="plist" aria-label="Guardar en playlist">${S.playlist.includes(t.title) ? '✔' : '＋'}</button>
-    <button class="btn ghost !px-2" data-act="prev" aria-label="Anterior">⏮</button>
-    <button class="btn fill !px-3" data-act="play" aria-label="Play/Pausa">${S.playing ? '⏸' : '▶'}</button>
-    <button class="btn ghost !px-2" data-act="next" aria-label="Siguiente">⏭</button></div></div>`;
-};
 
 function render() {
   const html = S.screen === 'boot' ? '<div class="pt-48 text-center neon text-xl">Verificando licencia…</div>'
     : S.screen === 'auth' ? authView() : S.screen === 'locked' ? lockedView()
-    : header() + (S.view === 'train' ? trainView() : S.view === 'food' ? foodView() : mapView()) + sheet() + restBar() + waze();
+    : header() + (S.view === 'train' ? trainView() : S.view === 'food' ? foodView() : mapView()) + sheet() + restBar();
   const t = document.createElement('div'); t.innerHTML = html; morph($('#app'), t); wake();
 }
-
-/* ---------- Media Session (controla el audio que reproduce ESTA app) ---------- */
-const audio = $('#player');
-function loadTrack() {
-  const t = TRACKS[S.trk]; audio.src = t.src || '';
-  if ('mediaSession' in navigator) navigator.mediaSession.metadata = new MediaMetadata({ title: t.title, artist: t.artist, album: 'AGRESSIVE LIFT' });
-}
-const play = async () => { if (!audio.src) return; try { await audio.play(); S.playing = true; } catch { S.playing = false; } render(); };
-const pause = () => { audio.pause(); S.playing = false; render(); };
-const skip = d => { S.trk = (S.trk + d + TRACKS.length) % TRACKS.length; loadTrack(); S.playing ? play() : render(); };
-if ('mediaSession' in navigator) {
-  const h = (a, f) => { try { navigator.mediaSession.setActionHandler(a, f); } catch {} };
-  h('play', play); h('pause', pause); h('previoustrack', () => skip(-1)); h('nexttrack', () => skip(1));
-}
-loadTrack();
 
 /* ---------- Acciones (delegación) ---------- */
 const val = id => parseFloat($('#' + id)?.value);
@@ -665,13 +670,19 @@ const ACT = {
     S.modal = { type: 'exercisevideo', name, motion: exerciseMotionType(name) };
   },
   closemodal() { S.modal = null; },
+  daymuscle(d) { const a = S.dayMuscles[S.routineDate] || (S.dayMuscles[S.routineDate] = []), i = a.indexOf(d.k); i >= 0 ? a.splice(i, 1) : a.push(d.k); store.set('dayMuscles', S.dayMuscles); },
+  daypreset(d) { S.dayMuscles[S.routineDate] = [...PRESETS[d.p]]; store.set('dayMuscles', S.dayMuscles); },
+  daygenerate() {
+    const ks = S.dayMuscles[S.routineDate] || []; if (!ks.length) return alert('Elige al menos un músculo');
+    S.routineEdits[S.routineDate] = ks.flatMap(k => CATALOG[k]); store.set('routineEdits', S.routineEdits);
+  },
   tab: d => { S.tab = d.t; S.open = null; }, toggle: d => S.open = S.open === d.id ? null : d.id,
   devil: d => S.devil[d.id] = !S.devil[d.id],
   logset(d) {
     const w = val('w-' + d.id), r = val('r-' + d.id);
     if (!(w >= 0) || !(r > 0)) return alert('Ingresa peso y repeticiones');
     if (raveOn() && E.isPR(S.logs[d.id], w, r)) return alert('🔒 PR bloqueado por Modo Rave (48 h). Baja la carga o las reps.');
-    const k = MAP[ALL.find(e => e.id === d.id).m];
+    const k = MAP[exById(d.id).m];
     if (weekDone(k) >= MUSCLES[k].mrv && !confirm(`Ya alcanzaste el MRV de ${MUSCLES[k].n} esta semana (${MUSCLES[k].mrv} series). ¿Registrar igual?`)) return;
     S.modal = { type: 'rir', id: d.id, w, r, devil: !!S.devil[d.id] };
   },
@@ -685,11 +696,11 @@ const ACT = {
     const isPR = E.isPR(S.logs[m.id], m.w, m.r);
     (S.logs[m.id] ||= []).push(row); store.set('logs', S.logs);
     saveSet(S.user.id, { exercise: m.id, weight: m.w, reps: m.r, rir: m.rir, failure: d.n, devil: m.devil });
-    S.rest = Date.now() + (m.devil ? 20 : ALL.findIndex(e => e.id === m.id) % 5 < 2 ? 120 : 75) * 1000; S.fresh = m.id;
+    S.rest = Date.now() + (m.devil ? 20 : /prensa|press|jal[oó]n|remo|muerto|sentadilla|thrust|dominada/i.test(exById(m.id)?.n || '') ? 120 : 75) * 1000; S.fresh = m.id;
     S.modal = null;
     if (isPR) setTimeout(() => alert(raveOn() ? '🔒 Posible PR, pero Modo Rave lo bloquea 24 h. No cuenta.' : '🔥 ¡Nuevo PR!'), 50);
   },
-  swap(d) { S.modal = { type: 'swap', id: d.id, alts: [...PROGRAM[S.tab].find(e => e.id === d.id).alt] }; },
+  swap(d) { S.modal = { type: 'swap', id: d.id, alts: [...exById(d.id).alt] }; },
   doswap(d) { d.n ? S.swaps[S.modal.id] = d.n : delete S.swaps[S.modal.id]; S.modal = null; },
   coachtoggle() { S.coachOpen = !S.coachOpen; store.set('coachOpen', S.coachOpen); },
   aitab(d) { S.aiTab = d.tab || 'coach'; store.set('aiTab', S.aiTab); },
@@ -792,10 +803,6 @@ const ACT = {
   },
   weeks() { S.meso.weeks = S.meso.weeks === 8 ? 6 : 8; store.set('meso', S.meso); },
   newmeso() { if (confirm('¿Reiniciar mesociclo?')) { S.meso.start = Date.now(); store.set('meso', S.meso); } },
-  sets: () => S.setsOpen = !S.setsOpen,
-  like() { const t = TRACKS[S.trk].title, i = S.likes.indexOf(t); i >= 0 ? S.likes.splice(i, 1) : S.likes.push(t); store.set('likes', S.likes); },
-  plist() { const t = TRACKS[S.trk].title, i = S.playlist.indexOf(t); i >= 0 ? S.playlist.splice(i, 1) : S.playlist.push(t); store.set('playlist', S.playlist); },
-  play: () => (S.playing ? pause() : play()), prev: () => skip(-1), next: () => skip(1),
 };
 function addMeal(items, text) {
   const t = { k: 0, p: 0, c: 0, f: 0 };
