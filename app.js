@@ -5,7 +5,7 @@ import * as E from './engine.js';
 
 /* ---------- Utilidades y persistencia local ---------- */
 const $ = s => document.querySelector(s);
-const VERSION = 'v11';
+const VERSION = 'v12';
 const esc = t => String(t).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 await hydrate(); // IndexedDB → caché en memoria
 const today = () => new Date().toISOString().slice(0, 10);
@@ -31,7 +31,7 @@ if (previousTrainingChat.some(message => message.role === 'user')) {
 }
 const TRAINER_GREETING = savedTrainingConfigured
   ? `Tu esquema guardado es ${savedTrainingSchedule?.days || 3} días · ${savedTrainingSchedule?.split || 'PPL'}. ¿Quieres conservarlo o cambiar frecuencia, descansos u objetivo? También puedo ajustar la rutina a tu nivel.`
-  : 'Soy tu coach de entrenamiento. Para configurar tu rutina dime tu objetivo, cuántos días tienes disponibles, qué frecuencia y descansos haces, y tu nivel (principiante, intermedio o avanzado). También puedes pedir una división PPL, torso/pierna o full body.';
+  : 'Bienvenido a AGRESSIVE LIFT. Antes de abrir tu rutina necesito conocer cómo entrenas para diseñarla a tu medida. Cuéntame en un solo mensaje (o por partes): 1) tu objetivo (hipertrofia, fuerza, definición), 2) tu nivel (principiante, intermedio o avanzado), 3) cuántos días entrenas y cuántos descansas, 4) qué división prefieres (PPL, torso/pierna o full body), 5) dónde entrenas (gimnasio o casa), cuánto dura tu sesión y si tienes alguna lesión o molestia.';
 const freshCoachChat = [{ role: 'assistant', text: TRAINER_GREETING }];
 store.set('coachChat', freshCoachChat);
 
@@ -123,6 +123,7 @@ const S = {
   trainingPlan: savedTrainingPlan,
   trainingSchedule: savedTrainingSchedule || DEFAULT_TRAINING_SCHEDULE,
   trainingConfigured: savedTrainingConfigured,
+  onboarded: store.get('onboarded', savedTrainingConfigured),
   trainingPreferences: store.get('trainingPreferences', {}),
   trainingSectionTab: 'routine',
   nutritionSectionTab: 'chat',
@@ -453,6 +454,20 @@ const trainingRoutinePanel = () => `<div class="routine-panel">
   <div class="training-top mt-3">${calendarCard()}</div>
 </div>`;
 
+/** Entrevista obligatoria: la app no se abre hasta que el coach conoce cómo entrena el usuario. */
+const onboardingView = () => {
+  const p = S.trainingPreferences, ready = S.trainingConfigured;
+  const steps = [['Objetivo', !!p.goal], ['Nivel', !!p.level], ['Días y división', ready], ['Lugar y lesiones', !!(p.place || p.injuries)]];
+  return `<div class="pt-4">
+  <div class="brand-title font-black neon"><img src="icon-180.png" alt="">AGRESSIVE LIFT</div>
+  <div class="onb-hero card on mt-3"><div class="text-xs text-zinc-500 uppercase tracking">Paso obligatorio · 1 min</div>
+    <div class="text-xl font-black mt-1">Conozcamos cómo entrenas</div>
+    <div class="text-sm text-zinc-400 mt-1">Tu coach IA ajusta ejercicios, series y calendario a tu nivel, tu tiempo y tus molestias. La app se desbloquea al terminar.</div>
+    <div class="onb-steps mt-3">${steps.map(([l, ok]) => `<span class="onb-step ${ok ? 'ok' : ''}">${ok ? '✓' : '○'} ${l}</span>`).join('')}</div></div>
+  ${coachPanel()}
+  <button class="btn fill w-full mt-3" data-act="onboardfinish" ${ready ? '' : 'disabled'}>${ready ? 'Ver mi rutina →' : 'Responde al coach para continuar'}</button>
+  </div>`;
+};
 const trainView = () => `<div class="section-subtabs" role="tablist" aria-label="Sección Entrenar">
   <button class="chip ${S.trainingSectionTab === 'coach' ? 'on' : ''}" role="tab" aria-selected="${S.trainingSectionTab === 'coach'}" data-act="traintab" data-tab="coach">💬 Entrenador IA</button>
   <button class="chip ${S.trainingSectionTab === 'routine' ? 'on' : ''}" role="tab" aria-selected="${S.trainingSectionTab === 'routine'}" data-act="traintab" data-tab="routine" >📋 Tu Rutina</button>
@@ -606,7 +621,11 @@ async function loadExMedia(name) {
       const r = await fetch(EXDB_URL); if (!r.ok) throw new Error('db');
       db = (await r.json()).filter(x => x.images?.length).map(x => [x.name, x.images[0], x.images[1] || x.images[0]]); store.set('exdb', db);
     }
-    const hit = matchEx(db, name); if (hit) media = { n: hit[0], a: EXIMG + hit[1], b: EXIMG + hit[2] };
+    const hit = matchEx(db, name);
+    if (hit) { // precarga y decodifica ambos fotogramas ANTES de mostrarlos: la animación no parpadea ni se corta
+      media = { n: hit[0], a: EXIMG + hit[1], b: EXIMG + hit[2] };
+      await Promise.all([media.a, media.b].map(src => new Promise(res => { const im = new Image(); im.onload = () => (im.decode ? im.decode().catch(() => {}).then(res) : res()); im.onerror = res; im.src = src; })));
+    }
   } catch {}
   if (S.modal?.type === 'exercisevideo' && S.modal.name === name) { S.modal = { ...S.modal, loading: false, media }; render(); }
 }
@@ -633,8 +652,18 @@ const ytBlock = m => {
   if (m.yt) return `<div class="ytwrap mt-3"><iframe src="https://www.youtube-nocookie.com/embed/${m.yt.id}?playsinline=1&rel=0&modestbranding=1" title="${esc(m.yt.title)}" allow="accelerometer; encrypted-media; picture-in-picture" allowfullscreen></iframe></div>
     <div class="flex justify-between items-center gap-2 mt-1"><span class="text-xs text-zinc-500 truncate">${esc(m.yt.title)}</span>${m.ytList.length > 1 ? '<button class="chip !px-3" data-act="ytnext">Otro video ↻</button>' : ''}</div>`;
   if (m.ytLoading) return '<div class="text-sm text-zinc-500 mt-3 text-center py-4">Buscando video…</div>';
-  if (!S.ytkey) return `<div class="card !p-2 mt-3 text-sm"><div class="font-bold mb-1">Activar videos dentro de la app</div><div class="text-zinc-400 mb-2">Pega tu clave gratuita de YouTube (se guarda solo en tu teléfono).</div><input id="ytkey" placeholder="Clave API de YouTube" autocomplete="off"><button class="btn w-full mt-2" data-act="ytsave">Activar videos</button></div>`;
-  return `<div class="card !p-2 mt-3 text-sm"><span class="text-red-400">${esc(m.ytErr || 'No se encontró video.')}</span> <button class="underline" data-act="ytclear">Cambiar clave</button></div>`;
+  if (!S.ytkey) return ''; // sin clave: no se pide nada; el video se abre con los enlaces de YouTube
+  return `<div class="text-xs text-zinc-500 mt-2"><span class="text-red-400">${esc(m.ytErr || 'No se encontró video dentro de la app.')}</span> <button class="underline" data-act="ytclear">Quitar clave</button></div>`;
+};
+/** Indicaciones de ejecución en español según el patrón de movimiento (fases completas del ejercicio). */
+const CUES = {
+  push: ['Escápulas atrás y abajo, pies firmes; agarre estable.', 'Baja controlado (2-3 s) hasta sentir el estiramiento del músculo.', 'Empuja explosivo sin bloquear los codos; exhala al subir.'],
+  pull: ['Pecho alto, hombros lejos de las orejas.', 'Inicia el movimiento con la espalda, no con los brazos.', 'Pausa 1 s en la contracción y regresa lento hasta estirar por completo.'],
+  squat: ['Pies al ancho de hombros, core firme, espalda neutra.', 'Baja controlado con rodillas siguiendo la línea de los pies.', 'Empuja el piso con todo el pie sin despegar los talones.'],
+  hinge: ['Cadera atrás, espalda neutra, rodillas ligeramente flexionadas.', 'Baja hasta sentir el estiramiento del isquio/glúteo.', 'Extiende la cadera y aprieta el glúteo arriba, sin hiperextender la espalda.'],
+  curl: ['Codos pegados al torso y muñecas neutras.', 'Sube sin balancear el cuerpo; aprieta el bíceps arriba.', 'Baja en 2-3 s hasta extender casi por completo.'],
+  raise: ['Torso estable, leve flexión de codos.', 'Sube hasta la altura del hombro (o el pico del músculo) sin impulso.', 'Baja lento; la fase negativa también cuenta.'],
+  extension: ['Codos fijos junto al cuerpo o sobre la cabeza.', 'Extiende por completo y aprieta el tríceps 1 s.', 'Regresa controlado sin que los codos se muevan.'],
 };
 
 /* ---------- XP, niveles y racha: se calculan SIEMPRE a partir de tus registros ---------- */
@@ -726,13 +755,23 @@ const sheet = () => {
     <input id="routine-exercise" class="mt-2" maxlength="120" placeholder="Ej: Press inclinado 4×8" value="${esc(m.value)}">
     <div class="flex gap-2 mt-3"><button class="btn fill flex-1" data-act="saveRoutineExercise">Guardar</button><button class="btn ghost flex-1" data-act="closemodal">Cancelar</button></div>
   </div></div>`;
-  if (m.type === 'exercisevideo') return `<div class="sheet"><div class="exercise-modal">
+  if (m.type === 'exercisevideo') {
+    const cues = CUES[m.motion] || CUES.push, enQ = m.media?.n || enGuess(m.name);
+    const ytEs = videoUrl(m.name), ytEn = 'https://www.youtube.com/results?search_query=' + encodeURIComponent('how to ' + enQ + ' proper form');
+    const stage = m.media
+      ? `<div class="exmedia"><img class="fa" src="${m.media.a}" alt="${esc(m.name)} posición inicial" decoding="async"><img class="fb" src="${m.media.b}" alt="${esc(m.name)} posición final" decoding="async"><span class="exbadge">▶ Ejercicio completo · en bucle</span></div>
+         <div class="exframes"><figure><img src="${m.media.a}" alt="Inicio"><figcaption>1 · Inicio</figcaption></figure><div class="exarrow">→</div><figure><img src="${m.media.b}" alt="Final"><figcaption>2 · Final</figcaption></figure></div>`
+      : m.loading ? '<div class="exmedia skeleton"><span class="exbadge">Cargando ejercicio…</span></div>'
+      : '<div class="exmedia empty"><div>🎬<br>No hay animación para este ejercicio.<br><b>Míralo completo en YouTube ↓</b></div></div>';
+    return `<div class="sheet"><div class="exercise-modal">
     <div class="flex justify-between items-start gap-2"><div><div class="text-xs text-zinc-500 uppercase tracking">Cómo se hace</div><div class="font-bold text-lg">${esc(m.name)}</div></div><button class="icon-btn" data-act="closemodal" aria-label="Cerrar">×</button></div>
-    ${ytBlock(m)}<div class="motion-stage mt-3 ${m.yt ? 'hidden' : ''}">${m.media ? `<div class="exmedia"><img src="${m.media.a}" alt="${esc(m.name)} posición inicial"><img class="f1" src="${m.media.b}" alt="${esc(m.name)} posición final"></div><div class="text-xs text-zinc-500 mt-1">${esc(m.media.n)} · imágenes de free-exercise-db</div>` : m.loading ? '<div class="text-sm text-zinc-500 py-8 text-center">Buscando imágenes del ejercicio…</div>' : '<div class="text-sm text-zinc-500 py-8 text-center">Sin imagen para este ejercicio. Activa los videos (arriba) o abre YouTube.</div>'}</div>
-    <p class="text-sm text-zinc-400 mt-2">Controla la fase de bajada, mantén la trayectoria estable y termina cada repetición sin perder la postura.</p>
-    <a class="btn ghost w-full mt-3" href="${videoUrl(m.name)}" target="_blank" rel="noopener">Abrir búsqueda en YouTube ↗</a>
-    <button class="btn ghost w-full mt-3" data-act="closemodal">Cerrar</button>
+    ${ytBlock(m)}
+    <div class="motion-stage mt-3 ${m.yt ? 'hidden' : ''}">${stage}${m.media ? `<div class="text-xs text-zinc-500 mt-1">${esc(m.media.n)} · free-exercise-db</div>` : ''}</div>
+    <ol class="excues">${cues.map((c, i) => `<li><b class="neon">${i + 1}</b><span>${esc(c)}</span></li>`).join('')}</ol>
+    <div class="grid grid-cols-2 gap-2 mt-3"><a class="btn fill" href="${ytEs}" target="_blank" rel="noopener">▶ Video en YouTube</a><a class="btn" href="${ytEn}" target="_blank" rel="noopener">▶ En inglés ↗</a></div>
+    <button class="btn ghost w-full mt-2" data-act="closemodal">Cerrar</button>
   </div></div>`;
+  }
   return '';
 };
 
@@ -741,6 +780,7 @@ function render() {
   if (S.screen === 'app') syncHist();
   const html = S.screen === 'boot' ? '<div class="pt-48 text-center neon text-xl">Verificando licencia…</div>'
     : S.screen === 'auth' ? authView() : S.screen === 'locked' ? lockedView()
+    : !S.onboarded ? onboardingView() + (S.toast ? `<div class="toast">${esc(S.toast)}</div>` : '')
     : header() + (S.view === 'train' ? trainView() : S.view === 'food' ? foodView() : S.view === 'control' ? controlView() : mapView()) + sheet() + restBar() + (S.toast ? `<div class="toast">${esc(S.toast)}</div>` : '');
   const t = document.createElement('div'); t.innerHTML = html; morph($('#app'), t); wake();
 }
@@ -768,6 +808,12 @@ const ACT = {
     render();
   },
   recheck() { return gate({ user: S.user }); },
+  onboardfinish() {
+    if (!S.trainingConfigured) return;
+    S.onboarded = true; store.set('onboarded', true);
+    S.view = 'train'; S.trainingSectionTab = 'routine'; S.routineDate = today();
+    toast('✅ Rutina lista. ¡A entrenar!');
+  },
   view(d) {
     S.view = d.v;
     if (d.v === 'train') { S.coachOpen = true; S.trainingSectionTab = 'routine'; }
@@ -1047,8 +1093,38 @@ function buildTrainingPlan(text, request = parseTrainingRequest(text)) {
   const source = split === 'Torso/Pierna' ? upperLower : split === 'Full Body' ? fullBody : ppl;
   return Array.from({ length: days }, (_, i) => ({
     ...source[i % source.length],
+    m: musclesForSession(source[i % source.length].day),
     day: `Día ${i + 1} · ${source[i % source.length].day}`,
   }));
+}
+/** Grupos musculares de cada sesión del plan (para volcarla al calendario con 2 ejercicios por músculo). */
+function musclesForSession(name) {
+  const t = String(name).toLowerCase();
+  if (/push/.test(t)) return ['pecho', 'hombros', 'triceps'];
+  if (/pull/.test(t)) return ['espalda', 'biceps', 'core'];
+  if (/legs b/.test(t)) return ['gluteos', 'isquios', 'gemelos'];
+  if (/legs/.test(t)) return ['cuads', 'isquios', 'gemelos'];
+  if (/torso/.test(t)) return ['pecho', 'espalda', 'hombros', 'biceps', 'triceps'];
+  if (/pierna/.test(t)) return ['cuads', 'isquios', 'gluteos', 'gemelos'];
+  if (/completo a/.test(t)) return ['cuads', 'pecho', 'espalda', 'isquios'];
+  if (/completo b/.test(t)) return ['isquios', 'hombros', 'espalda', 'cuads'];
+  return ['gluteos', 'pecho', 'espalda', 'hombros'];
+}
+/** Vuelca el plan al calendario (próximas 4 semanas): entrenos con ejercicios y descansos. No toca días ya registrados. */
+function applyPlanToCalendar() {
+  const level = S.trainingPreferences.level, perMuscle = level === 'principiante' ? 1 : 2;
+  const hasLogs = iso => Object.values(S.logs).some(l => l.some(x => x.d === iso));
+  for (let i = 0; i < 28; i++) {
+    const iso = shiftIsoDate(today(), i);
+    if (hasLogs(iso)) continue;
+    const ses = routineSessionForDate(iso);
+    if (ses) {
+      const ks = ses.m || musclesForSession(ses.day);
+      S.dayMuscles[iso] = ks; delete S.dayRest[iso]; delete S.doneEx[iso];
+      S.routineEdits[iso] = strategicOrder(ks).flatMap(k => CATALOG[k].slice(0, perMuscle));
+    } else { delete S.dayMuscles[iso]; delete S.routineEdits[iso]; S.dayRest[iso] = true; }
+  }
+  ['dayMuscles', 'routineEdits', 'dayRest', 'doneEx'].forEach(k => store.set(k, S[k]));
 }
 
 function coachReply(text, request = parseTrainingRequest(text)) {
@@ -1061,11 +1137,13 @@ function coachReply(text, request = parseTrainingRequest(text)) {
       : `${request.days} días por semana · ${request.split}`;
     const details = S.trainingPlan.map(day => `${day.day} (${day.focus}):\n• ${day.blocks.join('\n• ')}`).join('\n\n');
     const profile = [request.goal && `objetivo ${request.goal}`, request.level && `nivel ${request.level}`].filter(Boolean).join(' · ');
-    return `Entendido. Ya que entrenas con este esquema de ${cadence}${profile ? ` (${profile})` : ''}, reestructuro tu rutina de la siguiente manera:\n\n${details}\n\nActualicé tu plan y el calendario con esta distribución.`;
+    return `Entendido. Ya que entrenas con este esquema de ${cadence}${profile ? ` (${profile})` : ''}, reestructuro tu rutina de la siguiente manera:\n\n${details}\n\nActualicé tu plan y llené el calendario de las próximas 4 semanas con ejercicios por músculo${S.trainingPreferences.level === 'principiante' ? ' (1 ejercicio por músculo al empezar, para que construyas técnica)' : ''}.${S.trainingPreferences.injuries && S.trainingPreferences.injuries !== 'ninguna' ? ' Anoté tu molestia: si un ejercicio la agrava, usa Smart Swap para cambiarlo.' : ''}`;
   }
   if (!S.trainingConfigured) {
-    const preferences = [S.trainingPreferences.goal && `objetivo ${S.trainingPreferences.goal}`, S.trainingPreferences.level && `nivel ${S.trainingPreferences.level}`].filter(Boolean).join(' · ');
-    return `${preferences ? `Anotado: ${preferences}. ` : ''}Para configurar y desbloquear la rutina, dime cuántos días entrenas, cuántos descansas y si prefieres PPL, torso/pierna o full body.`;
+    const p = S.trainingPreferences;
+    const known = [p.goal && `objetivo ${p.goal}`, p.level && `nivel ${p.level}`, p.place && `entrenas en ${p.place}`, p.duration && `sesión de ${p.duration}`, p.injuries && (p.injuries === 'ninguna' ? 'sin lesiones' : 'molestias anotadas')].filter(Boolean).join(' · ');
+    const missing = [!p.goal && 'tu objetivo (hipertrofia, fuerza o definición)', !p.level && 'tu nivel (principiante, intermedio o avanzado)', 'cuántos días entrenas y cuántos descansas, y la división (PPL, torso/pierna o full body)', !p.injuries && 'si tienes alguna lesión o molestia'].filter(Boolean);
+    return `${known ? `Anotado: ${known}. ` : ''}Para diseñar tu rutina aún necesito: ${missing.join('; ')}.`;
   }
   const schedule = `${S.trainingSchedule.days} días · ${S.trainingSchedule.split}`;
   if (/volumen|series|semana/.test(t)) return `Con tu esquema actual de ${schedule}, reparte las series entre las sesiones del plan y evita llevar todos los ejercicios al fallo. El detalle de cada día está en la pestaña Ejercicios.`;
@@ -1080,6 +1158,12 @@ async function sendCoachMessage(text) {
   const level = /principiante|novato/.test(normalized) ? 'principiante' : /intermedio/.test(normalized) ? 'intermedio' : /avanzado/.test(normalized) ? 'avanzado' : '';
   if (goal) S.trainingPreferences.goal = goal;
   if (level) S.trainingPreferences.level = level;
+  if (/lesion|dolor|molestia|operad|tendinitis|hernia/.test(normalized)) S.trainingPreferences.injuries = text.slice(0, 160);
+  if (/\bsin lesion|ninguna lesion|no tengo lesion/.test(normalized)) S.trainingPreferences.injuries = 'ninguna';
+  if (/\bcasa\b|en casa/.test(normalized)) S.trainingPreferences.place = 'casa';
+  else if (/gimnasio|\bgym\b/.test(normalized)) S.trainingPreferences.place = 'gimnasio';
+  const dur = /(\d{2,3})\s*(?:min|minutos)/.exec(normalized) || /(\d(?:[.,]\d)?)\s*horas?/.exec(normalized);
+  if (dur) S.trainingPreferences.duration = dur[0];
   store.set('trainingPreferences', S.trainingPreferences);
   const request = parseTrainingRequest(text);
   const previousReply = [...S.coachChat].reverse().find(message => message.role === 'assistant')?.text;
@@ -1097,6 +1181,8 @@ async function sendCoachMessage(text) {
     store.set('trainingConfigured', true);
     store.set('trainingSchedule', S.trainingSchedule);
     store.set('trainingPlan', S.trainingPlan);
+    store.set('trainingPreferences', S.trainingPreferences);
+    applyPlanToCalendar();
   }
   store.set('coachChat', S.coachChat);
   store.set('note', S.note);
@@ -1107,7 +1193,7 @@ async function sendCoachMessage(text) {
     try {
       const result = await ai('coach', {
         task: 'training', systemPrompt: TRAINER_SYSTEM_PROMPT, currentMessage: text,
-        schedule: S.trainingSchedule, trainingPlan: S.trainingPlan,
+        schedule: S.trainingSchedule, trainingPlan: S.trainingPlan, preferences: S.trainingPreferences,
         recentMessages: S.coachChat.slice(-8),
       });
       const modelReply = String(result.note || '').trim();
