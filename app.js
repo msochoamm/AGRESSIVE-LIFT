@@ -5,7 +5,7 @@ import * as E from './engine.js';
 
 /* ---------- Utilidades y persistencia local ---------- */
 const $ = s => document.querySelector(s);
-const VERSION = 'v9';
+const VERSION = 'v11';
 const esc = t => String(t).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 await hydrate(); // IndexedDB → caché en memoria
 const today = () => new Date().toISOString().slice(0, 10);
@@ -73,17 +73,17 @@ const MAP = { Core: 'core', Pecho: 'pecho', Hombro: 'hombros', 'Deltoide post.':
   'Bíceps': 'biceps', 'Cuádriceps': 'cuads', Isquios: 'isquios', 'Glúteo': 'gluteos', Gemelo: 'gemelos' };
 const dAdd = n => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
 // Series de la última semana por grupo (para respetar el MRV en tiempo real).
-const weekDone = k => [...ALL, ...Object.values(CEX)].filter(e => MAP[e.m] === k).reduce((n, e) => n + (S.logs[e.id] || []).filter(x => (Date.now() - new Date(x.d)) / 864e5 < 7).length, 0);
+const weekDone = k => [...ALL, ...Object.values(CEX)].filter(e => MAP[e.m] === k).reduce((n, e) => n + (S.logs[e.id] || []).filter(x => (Date.now() - new Date(x.d)) / 864e5 < 7 && x.t !== 'w').length, 0);
 // Catálogo: SIEMPRE 2 ejercicios por músculo (principal + complementario).
 const CATALOG = {
   pecho: ['Press inclinado con mancuernas 4×8-10', 'Aperturas en polea 3×12-15'],
   espalda: ['Jalón al pecho 4×8-12', 'Remo con apoyo pectoral 4×8-12'],
   hombros: ['Press militar en máquina 3×8-10', 'Elevaciones laterales en polea 4×12-15'],
   biceps: ['Curl inclinado con mancuernas 3×10-12', 'Curl predicador 3×10-12'],
-  triceps: ['Extensión de tríceps en polea 3×10-12', 'Press francés con barra Z 3×8-10'],
+  triceps: ['Press francés con barra Z 3×8-10', 'Extensión de tríceps en polea 3×10-12'],
   core: ['Crunch en polea 3×12-15', 'Elevación de piernas colgado 3×10-15'],
   cuads: ['Prensa de piernas 4×8-12', 'Extensión de cuádriceps 3×12-15'],
-  isquios: ['Curl femoral sentado 4×8-12', 'Peso muerto rumano 3×8-10'],
+  isquios: ['Peso muerto rumano 3×8-10', 'Curl femoral sentado 4×8-12'],
   gluteos: ['Hip thrust 4×8-12', 'Sentadilla búlgara 3×8-10'],
   gemelos: ['Gemelo de pie 4×10-15', 'Gemelo sentado 3×12-20'],
 };
@@ -92,7 +92,10 @@ const LABEL = { pecho: 'Pecho', espalda: 'Espalda', hombros: 'Hombro', biceps: '
 const clean = n => n.replace(/\s*\d+\s*[x×]\s*[\d-]+.*$/i, '').trim();
 const slug = n => n.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 const CEX = {}; // ejercicios del catálogo con id estable (para registrar series y autorregulación)
-Object.entries(CATALOG).forEach(([k, l]) => l.forEach((full, i) => { const n = clean(full); CEX['c-' + slug(n)] = { id: 'c-' + slug(n), n, m: LABEL[k], k, alt: [clean(l[1 - i])] }; }));
+Object.entries(CATALOG).forEach(([k, l]) => l.forEach((full, i) => { const n = clean(full); CEX['c-' + slug(n)] = { id: 'c-' + slug(n), n, m: LABEL[k], k, alt: [clean(l[1 - i])], sets: +(full.match(/(\d+)\s*[x×]/)?.[1]) || 3, rng: full.match(/[x×]\s*([\d-]+)/)?.[1] || '8-12', fin: i === 1 }; }));
+// Orden estratégico: músculos grandes primero (los priorizados antes que todos); compuesto pesado → aislamiento (finalizador).
+const ORDER = ['cuads', 'isquios', 'gluteos', 'espalda', 'pecho', 'hombros', 'triceps', 'biceps', 'gemelos', 'core'];
+const strategicOrder = ks => { const by = a => [...a].sort((x, y) => ORDER.indexOf(x) - ORDER.indexOf(y)); return [...by(ks.filter(k => S.focus.includes(k))), ...by(ks.filter(k => !S.focus.includes(k)))]; };
 const exById = id => CEX[id] || ALL.find(e => e.id === id);
 const exByName = name => { const t = slug(clean(name)); return Object.values(CEX).find(e => slug(e.n) === t) || ALL.find(e => slug(e.n) === t); };
 const videoUrl = name => 'https://www.youtube.com/results?search_query=' + encodeURIComponent('cómo hacer ' + clean(name) + ' técnica correcta');
@@ -125,7 +128,7 @@ const S = {
   nutritionSectionTab: 'chat',
   muscleSide: 'front',
   routineDate: today(),
-  routineEdits: store.get('routineEdits', {}), dayMuscles: store.get('dayMuscles', {}), dayRest: store.get('dayRest', {}), ytkey: store.get('ytkey', ''), ytcache: store.get('ytcache', {}),
+  routineEdits: store.get('routineEdits', {}), dayMuscles: store.get('dayMuscles', {}), dayRest: store.get('dayRest', {}), ytkey: store.get('ytkey', ''), macroHist: store.get('macroHist', {}), toast: '', doneEx: store.get('doneEx', {}), drop: {}, restWhy: '', ytcache: store.get('ytcache', {}),
   routineModal: null,
   nutritionPreferences: store.get('nutritionPreferences', {}),
   nutritionChat: freshNutritionChat,
@@ -182,18 +185,19 @@ async function wake() {
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) wake(); });
 // Temporizador de descanso: el tick solo toca el texto del reloj (sin re-render).
+const beep = () => { try { const c = new (window.AudioContext || window.webkitAudioContext)(), o = c.createOscillator(); o.connect(c.destination); o.frequency.value = 880; o.start(); setTimeout(() => { o.stop(); c.close(); }, 400); } catch {} };
 const fmt = ms => { const s = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
-const restBar = () => S.rest > Date.now() ? `<div class="rest" id="rest"><b id="rt" class="neon">${fmt(S.rest - Date.now())}</b><span class="text-sm text-zinc-400">Descanso</span>
+const restBar = () => S.rest > Date.now() ? `<div class="rest" id="rest"><b id="rt" class="neon">${fmt(S.rest - Date.now())}</b><span class="text-sm text-zinc-400 flex-1 min-w-0 resttxt">${esc(S.restWhy || 'Descanso')}</span>
   <span class="flex gap-1"><button class="chip" data-act="rest30">+30 s</button><button class="chip" data-act="restoff">Saltar</button></span></div>` : '';
 setInterval(() => {
   if (!S.rest) return; const left = S.rest - Date.now();
   if (left > 0) { const t = document.getElementById('rt'); if (t) t.textContent = fmt(left); }
-  else { S.rest = 0; navigator.vibrate?.([200, 100, 200]); render(); }
+  else { S.rest = 0; S.restWhy = ''; beep(); navigator.vibrate?.([200, 100, 200]); render(); }
 }, 250);
 // Mini-gráficas SVG.
 const spark = v => { if (v.length < 2) return ''; const lo = Math.min(...v), hi = Math.max(...v);
   return `<svg viewBox="0 0 120 28" preserveAspectRatio="none" class="spark"><polyline fill="none" stroke="#ff0033" stroke-width="2" vector-effect="non-scaling-stroke" points="${v.map((y, i) => `${(i / (v.length - 1) * 120).toFixed(1)},${(26 - (y - lo) / ((hi - lo) || 1) * 24).toFixed(1)}`).join(' ')}"/></svg>`; };
-const e1h = id => { const l = S.logs[id] || []; return [...new Set(l.map(s => s.d))].map(d => Math.max(...l.filter(s => s.d === d).map(s => s.w * (1 + s.r / 30)))).slice(-12); };
+const e1h = id => { const l = (S.logs[id] || []).filter(x => x.t !== 'w'); return [...new Set(l.map(s => s.d))].map(d => Math.max(...l.filter(s => s.d === d).map(s => s.w * (1 + s.r / 30)))).slice(-12); };
 
 /* ---------- Vistas ---------- */
 const authView = () => `
@@ -221,37 +225,66 @@ const lockedView = () => `
 const header = () => `
 <div class="flex justify-between items-center pt-4">
   <div><div class="brand-title font-black neon"><img src="icon-180.png" alt="">AGRESSIVE LIFT</div>
-  <div class="text-xs text-zinc-500">Mesociclo · semana ${mesoWeek()}/${S.meso.weeks} · rotación bloqueada · ${VERSION}</div></div>
+  <div class="text-xs text-zinc-500">Mesociclo · semana ${mesoWeek()}/${S.meso.weeks} · rotación bloqueada · ${VERSION}</div>${xpLine()}</div>
   ${LOCAL_MODE ? '' : '<button class="btn ghost" data-act="logout">Salir</button>'}
 </div>
 ${raveOn() ? `<div class="card on mt-3 text-sm">🔒 Modo Rave activo: PRs bloqueados ${Math.ceil((S.rave.prUntil - Date.now()) / 36e5)} h más. Entrena para técnica, no para récords.</div>` : ''}
-<div class="tabbar">${[['train', 'Entrenar'], ['food', 'Nutrición'], ['map', 'Músculos']]
+<div class="tabbar">${[['train', 'Entrenar'], ['food', 'Nutrición'], ['map', 'Músculos'], ['control', 'Control']]
   .map(([k, l]) => `<button class="chip flex-1 ${S.view === k ? 'on' : ''}" data-act="view" data-v="${k}">${l}</button>`).join('')}</div>
 </div>`;
 
 const todaySets = id => (S.logs[id] || []).filter(s => s.d === today());
 // Series de la sesión ANTERIOR (último día distinto de hoy) para autorregulación.
-const prevSets = id => { const h = (S.logs[id] || []).filter(s => s.d !== today()); const d = h.length && h[h.length - 1].d; return h.filter(s => s.d === d); };
+const prevSets = id => { const h = (S.logs[id] || []).filter(s => s.d !== today() && s.t !== 'w' && s.t !== 'drop'); const d = h.length && h[h.length - 1].d; return h.filter(s => s.d === d); };
 
+const HEAVY = /prensa|press|jal[oó]n|remo|muerto|sentadilla|thrust|dominada|b[uú]lgara/i;
+const GRIP = /jal[oó]n|remo|curl|muerto|dominada|pullover|face pull|encogimiento|colgado/i; // ejercicios donde el agarre puede limitar
+const DROP_REPS = [8, 12, 16];
+const isDone = id => !!S.doneEx[S.routineDate]?.[id];
+const setLabel = t => (t === 'w' ? 'Calentamiento' : t === 'drop' ? '⬇ Drop' : `Serie ${t || '·'}`);
+/** Descanso según ejercicio (pesado/aislamiento), reps, RIR y tipo de serie. */
+function restPlan({ id, t, r, rir, drop }) {
+  if (t === 'w') return { sec: 45, why: 'Calentamiento: descanso corto' };
+  const heavy = HEAVY.test(exById(id)?.n || '');
+  let sec = heavy ? 120 : 75, why = heavy ? 'Compuesto pesado' : 'Aislamiento';
+  if (r <= 6) { sec += 30; why += ' + pocas reps'; } else if (r >= 15) sec -= 15;
+  if (rir <= 0) { sec += 30; why += ' + al fallo'; } else if (rir === 1) sec += 15; else if (rir >= 3) sec -= 15;
+  if (drop === 'end') { sec += 45; why = 'Cierre del drop set: fatiga alta'; }
+  return { sec: Math.max(30, Math.round(sec / 5) * 5), why: 'Descanso · ' + why };
+}
+/** Descanso al pasar al siguiente ejercicio: según el que acabas y el que sigue. */
+function transitionPlan(cur, nxt) {
+  const mk = e => e.k || MAP[e.m], same = mk(cur) === mk(nxt), base = HEAVY.test(cur.n) ? 120 : 75;
+  const sec = Math.max(45, Math.round((base * (same ? 1 : 0.6) + (HEAVY.test(nxt.n) ? 30 : 15)) / 5) * 5);
+  return { sec, why: `Siguiente: ${nxt.n} · ${same ? 'mismo músculo, recupera' : 'cambio de músculo, prepara la máquina'}` };
+}
+const dropBanner = (id, p) => `<div class="card on mt-3"><div class="font-bold neon">⬇ DROP SET · descenso ${p.step + 1}/3</div>
+  <div class="text-sm mt-1">Baja a <b>${p.ws[p.step]} kg</b> (−20 %) y haz <b>${DROP_REPS[p.step]} reps al fallo</b>. Descanso: <b>ninguno</b>, solo cambia el peso (≈10 s).</div>
+  <div class="mt-2"><div class="step"><button data-act="step" data-f="dr-${id}-${p.step}" data-s="-1" aria-label="menos">−</button><input id="dr-${id}-${p.step}" type="number" inputmode="numeric" value="${DROP_REPS[p.step]}"><button data-act="step" data-f="dr-${id}-${p.step}" data-s="1" aria-label="más">＋</button></div>
+  <button class="btn fill w-full mt-2" data-act="dropsave" data-id="${id}">Guardar descenso</button></div>
+  <button class="underline text-xs text-zinc-500 mt-2" data-act="dropskip" data-id="${id}">Cancelar drop set</button></div>`;
 function exCard(e) {
-  const name = S.swaps[e.id] || e.n, sets = todaySets(e.id), open = S.open === e.id, dv = S.devil[e.id],
-    sg = open ? E.regulate(S.swaps[e.id] ? [] : prevSets(e.id), mesoWeek(), S.meso.weeks) : null;
-  return `<div class="card ${open ? 'on' : ''}">
+  const name = S.swaps[e.id] || e.n, sets = todaySets(e.id), open = S.open === e.id, dv = S.devil[e.id], done = isDone(e.id), dp = S.drop[e.id];
+  const work = sets.filter(x => x.t !== 'w' && x.t !== 'drop'), plan = e.sets || 3;
+  const sg = open ? E.regulate(S.swaps[e.id] ? [] : prevSets(e.id), mesoWeek(), S.meso.weeks) : null;
+  return `<div class="card ${open ? 'on' : ''} ${done ? 'done' : ''}">
   <div class="flex justify-between items-start" data-act="toggle" data-id="${e.id}">
-    <div><div class="font-bold text-lg leading-tight">${esc(name)}${S.swaps[e.id] ? ' <span class="text-xs neon">SWAP</span>' : ''}</div>
-    <div class="text-xs text-zinc-500">${e.m} · ${sets.length} series hoy</div></div><span class="neon">${open ? '▾' : '▸'}</span></div>
+    <div><div class="font-bold text-lg leading-tight">${done ? '✅ ' : ''}${esc(name)}${S.swaps[e.id] ? ' <span class="text-xs neon">SWAP</span>' : ''}</div>
+    <div class="text-xs text-zinc-500">${e.m}${e.sets ? ` · plan ${e.sets}×${e.rng}` : ''} · ${work.length}/${plan} series${e.fin ? ' · <span class="neon">🔥 finalizador</span>' : ''}</div></div><span class="neon">${open ? '▾' : '▸'}</span></div>
   ${open ? `
-  ${sets.map((s, i) => `<div class="text-sm text-zinc-400 mt-2 ${S.fresh === e.id && i === sets.length - 1 ? 'pop' : ''}">#${i + 1} · ${s.w} kg × ${s.r} · RIR ${s.rir} · falló: ${s.fail}${s.devil ? ' · 😈' : ''}</div>`).join('')}
+  ${sets.map((x, i) => `<div class="text-sm text-zinc-400 mt-2 ${S.fresh === e.id && i === sets.length - 1 ? 'pop' : ''}">${setLabel(x.t)} · ${x.w} kg × ${x.r}${x.t === 'w' ? '' : ` · RIR ${x.rir}`}${x.fail && x.fail !== 'Músculo objetivo' ? ` · limitó: ${x.fail}` : ''}</div>`).join('')}
   <div class="card !p-2 mt-2 text-sm ${sg.action === 'descarga' ? 'on' : ''}"><b class="neon">${sg.action.toUpperCase()}</b>${sg.w ? ' · ' + sg.w + ' kg' : ''}<div class="text-zinc-400">${esc(sg.note)}</div></div>
   ${spark(e1h(e.id))}
+  ${dp ? dropBanner(e.id, dp) : `
   <div class="flex gap-2 mt-3">${['w', 'r'].map(f => `<div class="step"><button data-act="step" data-f="${f}-${e.id}" data-s="${f === 'w' ? -2.5 : -1}" aria-label="menos">−</button><input id="${f}-${e.id}" type="number" inputmode="${f === 'w' ? 'decimal' : 'numeric'}" placeholder="${f === 'w' ? 'kg' : 'reps'}" ${f === 'w' && sg.w != null ? `value="${sg.w}"` : ''}><button data-act="step" data-f="${f}-${e.id}" data-s="${f === 'w' ? 2.5 : 1}" aria-label="más">＋</button></div>`).join('')}</div>
-  <button class="btn fill w-full mt-2" data-act="logset" data-id="${e.id}">Registrar serie</button>
+  <button class="btn fill w-full mt-2" data-act="logset" data-id="${e.id}">Registrar serie ${work.length + 1}</button>`}
   <div class="flex gap-2 mt-2">
-    <button class="btn flex-1 ${dv ? 'fill' : ''}" data-act="devil" data-id="${e.id}">😈 Modo Diablo</button>
-    <button class="btn ghost flex-1" data-act="exercisevideo" data-exercise="${esc(name)}" aria-label="Ver demostración de ${esc(name)}" title="Ver demostración de ejecución">▶ Técnica</button>
+    <button class="btn flex-1 ${dv ? 'fill' : ''}" data-act="devil" data-id="${e.id}">⬇ Drop set${dv ? ' ON' : ''}</button>
+    <button class="btn ghost flex-1" data-act="exercisevideo" data-exercise="${esc(name)}" aria-label="Ver cómo se hace ${esc(name)}">▶ Técnica</button>
     <button class="btn ghost flex-1" data-act="swap" data-id="${e.id}">Smart Swap</button></div>
-  ${dv ? `<div class="card mt-2 text-sm">Última serie al fallo, luego descenso (~−20 % peso, sin descanso): 8 → 12 → 16 reps al fallo.
-    <div class="flex gap-2 mt-2">${[8, 12, 16].map(r => `<button class="chip flex-1" data-act="drop" data-id="${e.id}" data-r="${r}">${r}</button>`).join('')}</div></div>` : ''}` : ''}
+  ${dv && !dp ? '<div class="text-xs text-zinc-400 mt-2">⬇ Drop set activo: registra tu serie principal al fallo y te digo a cuánto bajar (−20 %, 3 descensos: 8 → 12 → 16 reps) y que no descanses.</div>' : ''}
+  ${e.fin && !dv ? '<div class="text-xs neon mt-2">🔥 Finalizador: activa Drop set en tu última serie para dejar el músculo al límite.</div>' : ''}
+  ${sets.length ? `<button class="btn ${!done && work.length >= plan ? 'fill' : 'ghost'} w-full mt-2" data-act="${done ? 'undone' : 'doneex'}" data-id="${e.id}">${done ? '↩ Reabrir ejercicio' : '✅ Ejercicio terminado'}</button>` : ''}` : ''}
   </div>`;
 }
 
@@ -396,8 +429,8 @@ const routineDayPanel = () => {
     <div class="grid grid-cols-2 gap-2 mt-3"><button class="chip ${rest ? '' : 'on'}" data-act="daytype" data-t="train">🏋️ Entreno</button><button class="chip ${rest ? 'on' : ''}" data-act="daytype" data-t="rest">😴 Descanso</button></div>
     ${rest ? '' : `${dayBuilder()}
     <div class="flex justify-between items-center mt-3"><span class="text-xs text-zinc-500">Ejercicios del día</span><button class="btn" data-act="addroutineexercise">＋ Añadir ejercicio</button></div>
-    <div class="routine-exercise-list">${exercises.map((exercise, index) => `<div class="routine-exercise-row">
-      <span class="routine-exercise-name">${esc(exercise)}</span>
+    ${exercises.length ? '<div class="text-xs text-zinc-500 mt-2">Orden estratégico: músculos grandes y priorizados primero · compuesto pesado → aislamiento · el 🔥 finalizador va con drop set para llevar el músculo al límite.</div>' : ''}<div class="routine-exercise-list">${exercises.map((exercise, index) => `<div class="routine-exercise-row">
+      <span class="routine-exercise-name">${index + 1}. ${esc(exercise)}${exByName(exercise)?.fin ? ' <span class="text-xs neon">🔥 finalizador</span>' : ''}</span>
       <button class="icon-btn" data-act="exercisevideo" data-index="${index}" aria-label="Ver ${esc(exercise)}" title="Ver ejercicio">▶</button>
       <button class="icon-btn" data-act="editroutineexercise" data-index="${index}" aria-label="Editar ${esc(exercise)}" title="Editar">✎</button>
       <button class="icon-btn" data-act="removeroutineexercise" data-index="${index}" aria-label="Eliminar ${esc(exercise)}" title="Eliminar">×</button>
@@ -408,7 +441,7 @@ const routineDayPanel = () => {
 const loggingCards = () => {
   const cards = routineExercisesForDate(S.routineDate).map(exByName).filter(Boolean);
   if (!cards.length) return '';
-  return `<div class="plan-title mt-3">Registrar series</div>${S.focus.length ? `<div class="text-xs text-zinc-500 mb-2">Enfoque semanal: ${S.focus.map(k => MUSCLES[k].n).join(' + ')}</div>` : ''}
+  return `<div class="plan-title mt-3">Registrar series · ${cards.filter(c => isDone(c.id)).length}/${cards.length} terminados</div>${S.focus.length ? `<div class="text-xs text-zinc-500 mb-2">Enfoque semanal: ${S.focus.map(k => MUSCLES[k].n).join(' + ')}</div>` : ''}
   ${cards.map(exCard).join('')}
   <div class="text-xs text-zinc-600 mt-2">Semana ${mesoWeek()} de ${S.meso.weeks}: mantén los mismos ejercicios y sube carga o reps. <button class="underline" data-act="weeks">${S.meso.weeks} semanas (cambiar)</button> · <button class="underline" data-act="newmeso">reiniciar</button></div>`;
 };
@@ -555,9 +588,11 @@ const EN = { // nombre en español → nombres probables en inglés del catálog
   'gemelo-sentado': ['seated calf raise'], 'press-de-pecho-en-maquina': ['machine bench press', 'chest press machine'], 'pullover-en-polea': ['straight-arm pulldown', 'pullover'],
   'face-pull': ['face pull'], 'hack-squat': ['hack squat'], 'press-arnold': ['arnold dumbbell press'],
 };
+const TR = { press: 'press', inclinado: 'incline', declinado: 'decline', mancuernas: 'dumbbell', mancuerna: 'dumbbell', barra: 'barbell', polea: 'cable', maquina: 'machine', jalon: 'pulldown', remo: 'row', extension: 'extension', elevaciones: 'raise', laterales: 'lateral', sentadilla: 'squat', prensa: 'leg press', muerto: 'deadlift', gemelo: 'calf', femoral: 'leg curl', cuadriceps: 'leg extension', pecho: 'chest', hombro: 'shoulder', espalda: 'back', fondos: 'dips', dominadas: 'pull-up', plancha: 'plank', zancadas: 'lunge', martillo: 'hammer', predicador: 'preacher', aperturas: 'fly', cruces: 'crossover', encogimientos: 'shrug', frances: 'skullcrusher' };
+const enGuess = name => slug(clean(name)).split('-').map(w => TR[w] ?? w).filter(w => !['de', 'en', 'con', 'la', 'el', 'sentado', 'pie'].includes(w)).join(' ');
 const norm = t => t.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 function matchEx(db, name) {
-  const qs = EN[slug(clean(name))] || [];
+  const qs = EN[slug(clean(name))] || [enGuess(name)];
   for (const q of qs) { const hit = db.find(r => norm(r[0]) === norm(q)); if (hit) return hit; }
   let best = null, bs = 0;
   for (const q of qs) { const qt = new Set(norm(q).split(' ')); for (const r of db) { const rt = new Set(norm(r[0]).split(' ')); let k = 0; qt.forEach(w => rt.has(w) && k++); const sc = k / Math.max(qt.size, rt.size); if (sc > bs) { bs = sc; best = r; } } }
@@ -602,12 +637,86 @@ const ytBlock = m => {
   return `<div class="card !p-2 mt-3 text-sm"><span class="text-red-400">${esc(m.ytErr || 'No se encontró video.')}</span> <button class="underline" data-act="ytclear">Cambiar clave</button></div>`;
 };
 
+/* ---------- XP, niveles y racha: se calculan SIEMPRE a partir de tus registros ---------- */
+const RANKS = [[1, 'Novato'], [5, 'Agresivo'], [10, 'Bestia'], [15, 'Titán'], [25, 'Élite'], [40, 'Leyenda']];
+const rankOf = L => RANKS.filter(r => L >= r[0]).pop()[1];
+const levelOf = xp => Math.floor(Math.sqrt(xp / 50)) + 1;
+const lvlStart = L => 50 * (L - 1) ** 2;
+const allRows = () => Object.values(S.logs).flat();
+const setsOn = d => Object.values(S.logs).reduce((n, l) => n + l.filter(x => x.d === d).length, 0);
+const tonOn = d => Object.values(S.logs).reduce((n, l) => n + l.filter(x => x.d === d).reduce((a, x) => a + x.w * x.r, 0), 0);
+const histBudget = d => (S.target ? S.target.kcal + (S.adj[d] || 0) : 0);
+function xpBreakdown() {
+  const rows = allRows(), hist = Object.entries(S.macroHist);
+  return {
+    sets: rows.reduce((n, x) => n + (x.t === 'w' ? 3 : 10 + (x.rir <= 1 ? 3 : 0) + (x.devil ? 5 : 0) + (x.pr ? 50 : 0)), 0),
+    train: new Set(rows.map(x => x.d)).size * 40,
+    meals: hist.reduce((n, [, h]) => n + 5 * (h.n || 0), 0),
+    target: hist.filter(([d, h]) => d < today() && h.n > 0 && histBudget(d) && h.k >= 0.9 * histBudget(d) && h.k <= 1.1 * histBudget(d)).length * 25,
+    weigh: S.weights.length * 15,
+    done: Object.values(S.doneEx).reduce((n, o) => n + Object.keys(o).length, 0) * 10,
+    rest: Object.keys(S.dayRest).filter(d => d <= today()).length * 10,
+  };
+}
+const totalXp = () => Object.values(xpBreakdown()).reduce((a, b) => a + b, 0);
+const streak = () => {
+  const act = d => setsOn(d) > 0 || S.dayRest[d] || S.macroHist[d]?.n > 0;
+  let i = act(today()) ? 0 : -1, n = 0; while (act(dAdd(i))) { n++; i--; } return n;
+};
+function syncHist() { // guarda el resumen de comida de cada día (para el control semanal)
+  const h = { k: S.macros.k, p: S.macros.p, c: S.macros.c, f: S.macros.f, n: S.meals.length }, o = S.macroHist[S.macros.d];
+  if (!o || JSON.stringify(o) !== JSON.stringify(h)) { S.macroHist[S.macros.d] = h; store.set('macroHist', S.macroHist); }
+}
+const toast = m => { S.toast = m; clearTimeout(toast.t); toast.t = setTimeout(() => { S.toast = ''; render(); }, 2600); };
+const xpToast = b => { const a = totalXp(); if (a <= b) return; const lb = levelOf(b), la = levelOf(a); toast(la > lb ? `🔥 ¡NIVEL ${la}! ${rankOf(la)} · +${a - b} XP` : `+${a - b} XP`); };
+const xpLine = () => { const x = totalXp(), L = levelOf(x), a = lvlStart(L), nx = lvlStart(L + 1), st = streak();
+  return `<div class="xpline" data-act="view" data-v="control"><b class="neon">Nv ${L}</b><span>${rankOf(L)}</span><div class="xpbar"><i style="width:${Math.round((x - a) / (nx - a) * 100)}%"></i></div><small>${x - a}/${nx - a} XP</small>${st ? `<span>🔥${st}</span>` : ''}</div>`; };
+
+const bars = (v, l) => { const mx = Math.max(...v, 1); return `<div class="bars">${v.map((n, i) => `<div class="bar"><b>${n || ''}</b><i style="height:${Math.round(n / mx * 70)}%"></i><span>${l[i]}</span></div>`).join('')}</div>`; };
+const controlView = () => {
+  const x = totalXp(), L = levelOf(x), a = lvlStart(L), nx = lvlStart(L + 1), br = xpBreakdown(), st = streak();
+  const days = Array.from({ length: 7 }, (_, i) => dAdd(i - 6)), lab = days.map(d => 'DLMXJVS'[new Date(d + 'T12:00:00').getDay()]);
+  const sets7 = days.map(setsOn), kcal7 = days.map(d => Math.round(S.macroHist[d]?.k || 0));
+  const rows7 = allRows().filter(r => days.includes(r.d)), prs = rows7.filter(r => r.pr).length;
+  const ton = Math.round(days.reduce((p, d) => p + tonOn(d), 0)), rir = rows7.length ? (rows7.reduce((p, r) => p + r.rir, 0) / rows7.length).toFixed(1) : '–';
+  const b = S.target ? histBudget(today()) : 0, m = S.macros;
+  const state = S.dayRest[today()] ? '😴 Descanso' : setsOn(today()) ? `🏋️ ${setsOn(today())} series hechas` : (S.routineEdits[today()] || []).length ? '📋 Entreno planeado' : 'Sin definir';
+  const ids = Object.keys(S.logs).filter(id => S.logs[id].length).sort((p, q) => S.logs[q].at(-1).d.localeCompare(S.logs[p].at(-1).d)).slice(0, 12);
+  return `
+<div class="card on"><div class="flex justify-between items-center"><div><div class="text-xs text-zinc-500">Nivel ${L}</div><div class="text-2xl font-black neon">${rankOf(L)}</div></div>
+  <div class="text-center"><div class="text-2xl font-black">${st} 🔥</div><div class="text-xs text-zinc-500">días de racha</div></div></div>
+  <div class="xpbar big mt-2"><i style="width:${Math.round((x - a) / (nx - a) * 100)}%"></i></div>
+  <div class="text-xs text-zinc-500 mt-1">${x - a} / ${nx - a} XP para el nivel ${L + 1} · total ${x} XP</div>
+  <div class="text-xs text-zinc-400 mt-2">XP por: series ${br.sets} · días entrenados ${br.train} · comida ${br.meals + br.target} · ejercicios terminados ${br.done} · peso ${br.weigh} · descansos ${br.rest}</div>
+  <details class="mt-2 text-sm text-zinc-400"><summary>Cómo gano XP</summary>Serie +10 (+3 si RIR 0-1, +5 drop set; calentamiento +3) · ejercicio terminado +10 · PR +50 · día entrenado +40 · comida registrada +5 · día dentro de tu meta +25 · pesaje +15 · descanso marcado +10. Rangos: Novato, Agresivo (nv 5), Bestia (10), Titán (15), Élite (25), Leyenda (40).</details></div>
+<div class="card"><div class="font-bold">Hoy · ${state}</div>
+  ${S.target ? `<div class="text-sm text-zinc-400 mt-1">${m.k} / ${b} kcal · P ${m.p} · C ${m.c} · G ${m.f}</div><div class="h-2 bg-zinc-900 mt-2 rounded"><div class="h-2 rounded" style="width:${Math.min(100, b ? m.k / b * 100 : 0)}%;background:#ff2b57"></div></div>` : '<div class="text-sm text-zinc-500 mt-1">Configura tu perfil en Nutrición para ver tus calorías.</div>'}</div>
+<div class="card"><div class="font-bold">Esta semana · series por día</div>${bars(sets7, lab)}
+  <div class="statgrid"><div class="stat"><b>${sets7.reduce((p, c) => p + c, 0)}</b><span>series</span></div><div class="stat"><b>${ton}</b><span>kg movidos</span></div><div class="stat"><b>${prs}</b><span>PRs</span></div>
+  <div class="stat"><b>${sets7.filter(Boolean).length}/7</b><span>días entrenados</span></div><div class="stat"><b>${rir}</b><span>RIR medio</span></div><div class="stat"><b>${days.filter(d => S.dayRest[d]).length}</b><span>descansos</span></div></div></div>
+<div class="card"><div class="font-bold mb-1">Volumen semanal vs MRV</div>${Object.keys(MUSCLES).map(k => { const n = weekDone(k), mv = MUSCLES[k].mrv; return `<div class="ctl-row"><span style="width:92px">${MUSCLES[k].n}</span><div class="mrv flex-1"><i style="width:${Math.min(100, n / mv * 100)}%;${n >= mv ? 'background:#fff' : ''}"></i></div><span class="text-xs text-zinc-400" style="width:52px;text-align:right">${n}/${mv}</span></div>`; }).join('')}</div>
+<div class="card"><div class="font-bold mb-1">Control de ejercicios</div>${ids.map(id => { const l = S.logs[id], z = l.at(-1), h = e1h(id), best = Math.round(Math.max(...l.map(r => r.w * (1 + r.r / 30)))), tr = h.length > 1 ? (h.at(-1) >= h.at(-2) ? '▲' : '▼') : '';
+    return `<div class="ctl-row"><div class="min-w-0"><div class="truncate">${esc(exById(id)?.n || id)}</div><div class="text-xs text-zinc-500">${z.d.slice(5)} · ${z.w} kg × ${z.r} · mejor 1RM ${best} kg ${tr}</div></div><button class="icon-btn" data-act="dellast" data-id="${id}" aria-label="Borrar última serie">🗑</button></div>`; }).join('') || '<div class="text-sm text-zinc-500">Aún no registras series.</div>'}</div>
+<div class="card"><div class="font-bold">Control de comida · kcal por día</div>${bars(kcal7, lab)}
+  ${S.meals.map((x, i) => `<div class="ctl-row"><div class="min-w-0"><div class="truncate">${esc(x.text)}</div><div class="text-xs text-zinc-500">${Math.round(x.k)} kcal · P${Math.round(x.p)} C${Math.round(x.c)} G${Math.round(x.f)}</div></div><button class="icon-btn" data-act="delmeal" data-i="${i}" aria-label="Borrar comida">🗑</button></div>`).join('') || '<div class="text-sm text-zinc-500 mt-2">Hoy no has registrado comidas.</div>'}
+  ${S.weights.length > 1 ? `<div class="font-bold mt-3">Peso corporal · ${S.weights.at(-1).kg} kg</div>${spark(S.weights.map(w => w.kg).slice(-12))}` : ''}</div>`;
+};
+
 const sheet = () => {
   const m = S.modal; if (!m) return '';
-  if (m.type === 'rir') return `<div class="sheet"><div><div class="font-bold mb-3">¿Cuántas reps te quedaban? (RIR)</div>
-    <div class="grid grid-cols-5 gap-2">${[0, 1, 2, 3, 4].map(n => `<button class="chip" data-act="rir" data-n="${n}">${n === 4 ? '4+' : n}</button>`).join('')}</div></div></div>`;
-  if (m.type === 'fail') return `<div class="sheet"><div><div class="font-bold mb-3">¿Dónde cedió?</div>
-    <div class="grid grid-cols-3 gap-2">${['Músculo objetivo', 'Antebrazo', 'Aire'].map(n => `<button class="chip" data-act="fail" data-n="${n}">${n}</button>`).join('')}</div></div></div>`;
+  if (m.type === 'setlog') {
+    const ex = exById(m.id), warm = m.t === 'w', chips = (act, items, cur) => items.map(([v, l]) => `<button class="chip ${cur === v ? 'on' : ''}" data-act="${act}" data-v="${v}">${l}</button>`).join('');
+    return `<div class="sheet"><div><div class="flex justify-between items-center gap-2"><div class="font-bold">${esc(S.swaps[m.id] || ex.n)}</div><div class="neon text-lg">${m.w} kg × ${m.r}</div></div>
+    ${m.devil ? '<div class="text-xs neon mt-1">⬇ Drop set: esta es la serie principal, al fallo</div>' : ''}
+    <div class="text-sm text-zinc-400 mt-3 mb-2">¿Qué serie es?</div>
+    <div class="grid grid-cols-5 gap-2">${chips('setpick', [['w', 'Calent.'], [1, '1'], [2, '2'], [3, '3'], [4, '4']], m.t)}</div>
+    ${warm ? '' : `<div class="text-sm text-zinc-400 mt-3 mb-2">¿Cuántas reps te quedaban? (RIR)</div>
+    <div class="grid grid-cols-5 gap-2">${chips('rirpick', [[0, '0'], [1, '1'], [2, '2'], [3, '3'], [4, '4+']], m.rir)}</div>`}
+    ${!warm && GRIP.test(ex.n) ? `<div class="text-sm text-zinc-400 mt-3 mb-2">¿Qué te limitó primero?</div>
+    <div class="grid grid-cols-3 gap-2">${chips('limpick', [['Músculo objetivo', 'Músculo'], ['Antebrazo', 'Agarre'], ['Aire', 'Respiración']], m.fail)}</div>` : ''}
+    <button class="btn fill w-full mt-4" data-act="setsave">Guardar serie</button>
+    <button class="btn ghost w-full mt-2" data-act="closemodal">Cancelar</button></div></div>`;
+  }
   if (m.type === 'swap') return `<div class="sheet"><div><div class="font-bold mb-1">Smart Swap</div><div class="text-xs text-zinc-500 mb-3">Misma tensión, otra máquina. Solo para hoy.</div>
     ${m.alts.map(a => `<button class="btn w-full mb-2" data-act="doswap" data-n="${esc(a)}">${esc(a)}</button>`).join('')}
     <button class="btn ghost w-full" data-act="doswap" data-n="">Volver al original</button></div></div>`;
@@ -619,12 +728,7 @@ const sheet = () => {
   </div></div>`;
   if (m.type === 'exercisevideo') return `<div class="sheet"><div class="exercise-modal">
     <div class="flex justify-between items-start gap-2"><div><div class="text-xs text-zinc-500 uppercase tracking">Cómo se hace</div><div class="font-bold text-lg">${esc(m.name)}</div></div><button class="icon-btn" data-act="closemodal" aria-label="Cerrar">×</button></div>
-    ${ytBlock(m)}<div class="motion-stage mt-3 ${m.yt ? 'hidden' : ''}">${m.media ? `<div class="exmedia"><img src="${m.media.a}" alt="${esc(m.name)} posición inicial"><img class="f1" src="${m.media.b}" alt="${esc(m.name)} posición final"></div><div class="text-xs text-zinc-500 mt-1">${esc(m.media.n)} · imágenes de free-exercise-db</div>` : m.loading ? '<div class="text-sm text-zinc-500 py-8 text-center">Buscando imágenes del ejercicio…</div>' : `<svg class="motion-demo-svg motion-${m.motion}" viewBox="0 0 260 170" role="img" aria-label="Animación esquemática de la ejecución de ${esc(m.name)}">
-      <line class="motion-bench" x1="58" y1="132" x2="202" y2="132"/>
-      <g class="motion-figure"><circle class="motion-outline" cx="130" cy="31" r="12"/><path class="motion-outline" d="M130 44 L130 99 M130 57 L98 73 L80 61 M130 57 L162 73 L180 61 M130 99 L105 137 M130 99 L155 137"/></g>
-      <g class="motion-bar"><line x1="55" y1="55" x2="205" y2="55"/><line x1="69" y1="46" x2="69" y2="64"/><line x1="191" y1="46" x2="191" y2="64"/><circle cx="55" cy="55" r="5"/><circle cx="205" cy="55" r="5"/></g>
-      <path class="motion-arrow" d="M218 78 V45 M212 52 L218 44 L224 52"/>
-    </svg>`}</div>
+    ${ytBlock(m)}<div class="motion-stage mt-3 ${m.yt ? 'hidden' : ''}">${m.media ? `<div class="exmedia"><img src="${m.media.a}" alt="${esc(m.name)} posición inicial"><img class="f1" src="${m.media.b}" alt="${esc(m.name)} posición final"></div><div class="text-xs text-zinc-500 mt-1">${esc(m.media.n)} · imágenes de free-exercise-db</div>` : m.loading ? '<div class="text-sm text-zinc-500 py-8 text-center">Buscando imágenes del ejercicio…</div>' : '<div class="text-sm text-zinc-500 py-8 text-center">Sin imagen para este ejercicio. Activa los videos (arriba) o abre YouTube.</div>'}</div>
     <p class="text-sm text-zinc-400 mt-2">Controla la fase de bajada, mantén la trayectoria estable y termina cada repetición sin perder la postura.</p>
     <a class="btn ghost w-full mt-3" href="${videoUrl(m.name)}" target="_blank" rel="noopener">Abrir búsqueda en YouTube ↗</a>
     <button class="btn ghost w-full mt-3" data-act="closemodal">Cerrar</button>
@@ -634,9 +738,10 @@ const sheet = () => {
 
 
 function render() {
+  if (S.screen === 'app') syncHist();
   const html = S.screen === 'boot' ? '<div class="pt-48 text-center neon text-xl">Verificando licencia…</div>'
     : S.screen === 'auth' ? authView() : S.screen === 'locked' ? lockedView()
-    : header() + (S.view === 'train' ? trainView() : S.view === 'food' ? foodView() : mapView()) + sheet() + restBar();
+    : header() + (S.view === 'train' ? trainView() : S.view === 'food' ? foodView() : S.view === 'control' ? controlView() : mapView()) + sheet() + restBar() + (S.toast ? `<div class="toast">${esc(S.toast)}</div>` : '');
   const t = document.createElement('div'); t.innerHTML = html; morph($('#app'), t); wake();
 }
 
@@ -665,7 +770,7 @@ const ACT = {
   recheck() { return gate({ user: S.user }); },
   view(d) {
     S.view = d.v;
-    if (d.v === 'train') { S.coachOpen = true; S.trainingSectionTab = 'coach'; }
+    if (d.v === 'train') { S.coachOpen = true; S.trainingSectionTab = 'routine'; }
     if (d.v === 'food') S.nutritionSectionTab = 'chat';
   },
   traintab(d) {
@@ -708,6 +813,8 @@ const ACT = {
     loadExMedia(name); loadYT(name);
   },
   closemodal() { S.modal = null; },
+  dellast(d) { const l = S.logs[d.id]; if (l?.length && confirm('¿Borrar la última serie de este ejercicio?')) { l.pop(); store.set('logs', S.logs); } },
+  delmeal(d) { const i = +d.i, x = S.meals[i]; if (!x || !confirm('¿Borrar esta comida?')) return; for (const k of ['k', 'p', 'c', 'f']) S.macros[k] = Math.max(0, S.macros[k] - (x[k] || 0)); S.meals.splice(i, 1); persist('macros', 'meals'); },
   ytsave() { const k = ($('#ytkey')?.value || '').trim(); if (k.length < 20) return alert('Pega la clave completa'); S.ytkey = k; store.set('ytkey', k); if (S.modal?.type === 'exercisevideo') { S.modal = { ...S.modal, ytLoading: true, ytErr: '' }; loadYT(S.modal.name); } },
   ytclear() { S.ytkey = ''; S.ytcache = {}; store.set('ytkey', ''); store.set('ytcache', {}); if (S.modal) S.modal = { ...S.modal, yt: null, ytErr: '', ytLoading: false }; },
   ytnext() { const m = S.modal, i = (m.ytI + 1) % m.ytList.length; S.modal = { ...m, ytI: i, yt: m.ytList[i] }; },
@@ -717,32 +824,59 @@ const ACT = {
   daygenerate() {
     const ks = S.dayMuscles[S.routineDate] || []; if (!ks.length) return alert('Elige al menos un músculo');
     delete S.dayRest[S.routineDate]; store.set('dayRest', S.dayRest);
-    S.routineEdits[S.routineDate] = ks.flatMap(k => CATALOG[k]); store.set('routineEdits', S.routineEdits);
+    S.routineEdits[S.routineDate] = strategicOrder(ks).flatMap(k => CATALOG[k]); delete S.doneEx[S.routineDate]; store.set('doneEx', S.doneEx);
+    S.open = exByName(S.routineEdits[S.routineDate][0])?.id || null; store.set('routineEdits', S.routineEdits);
   },
   tab: d => { S.tab = d.t; S.open = null; }, toggle: d => S.open = S.open === d.id ? null : d.id,
-  devil: d => S.devil[d.id] = !S.devil[d.id],
+  devil: d => { S.devil[d.id] = !S.devil[d.id]; if (!S.devil[d.id]) delete S.drop[d.id]; },
   logset(d) {
     const w = val('w-' + d.id), r = val('r-' + d.id);
     if (!(w >= 0) || !(r > 0)) return alert('Ingresa peso y repeticiones');
-    if (raveOn() && E.isPR(S.logs[d.id], w, r)) return alert('🔒 PR bloqueado por Modo Rave (48 h). Baja la carga o las reps.');
+    const hist = (S.logs[d.id] || []).filter(x => x.t !== 'w');
+    if (raveOn() && E.isPR(hist, w, r)) return alert('🔒 PR bloqueado por Modo Rave (48 h). Baja la carga o las reps.');
     const k = MAP[exById(d.id).m];
     if (weekDone(k) >= MUSCLES[k].mrv && !confirm(`Ya alcanzaste el MRV de ${MUSCLES[k].n} esta semana (${MUSCLES[k].mrv} series). ¿Registrar igual?`)) return;
-    S.modal = { type: 'rir', id: d.id, w, r, devil: !!S.devil[d.id] };
+    const n = todaySets(d.id).filter(x => x.t !== 'w' && x.t !== 'drop').length;
+    S.modal = { type: 'setlog', id: d.id, w, r, t: Math.min(4, n + 1), rir: 2, fail: 'Músculo objetivo', devil: !!S.devil[d.id] };
   },
-  drop(d) { // −20 % sobre la última serie efectiva, en cascada
-    const w = E.dropLoad(todaySets(d.id)); if (w == null) return alert('Registra primero una serie efectiva');
-    S.modal = { type: 'rir', id: d.id, w, r: +d.r, devil: true };
-  },
-  rir(d) { S.modal = { ...S.modal, type: 'fail', rir: +d.n }; },
-  fail(d) {
-    const m = S.modal, row = { d: today(), w: m.w, r: m.r, rir: m.rir, fail: d.n, devil: m.devil };
-    const isPR = E.isPR(S.logs[m.id], m.w, m.r);
+  setpick(d) { S.modal = { ...S.modal, t: d.v === 'w' ? 'w' : +d.v }; },
+  rirpick(d) { S.modal = { ...S.modal, rir: +d.v }; },
+  limpick(d) { S.modal = { ...S.modal, fail: d.v }; },
+  setsave() {
+    const m = S.modal, xb = totalXp(), warm = m.t === 'w', ex = exById(m.id);
+    const isPR = !warm && E.isPR((S.logs[m.id] || []).filter(x => x.t !== 'w'), m.w, m.r);
+    const fail = !warm && GRIP.test(ex.n) ? m.fail : 'Músculo objetivo';
+    const row = { d: today(), w: m.w, r: m.r, rir: warm ? 4 : m.rir, fail, devil: !!(m.devil && !warm), t: m.t, pr: isPR && !raveOn() };
     (S.logs[m.id] ||= []).push(row); store.set('logs', S.logs);
-    saveSet(S.user.id, { exercise: m.id, weight: m.w, reps: m.r, rir: m.rir, failure: d.n, devil: m.devil });
-    S.rest = Date.now() + (m.devil ? 20 : /prensa|press|jal[oó]n|remo|muerto|sentadilla|thrust|dominada/i.test(exById(m.id)?.n || '') ? 120 : 75) * 1000; S.fresh = m.id;
-    S.modal = null;
-    if (isPR) setTimeout(() => alert(raveOn() ? '🔒 Posible PR, pero Modo Rave lo bloquea 24 h. No cuenta.' : '🔥 ¡Nuevo PR!'), 50);
+    saveSet(S.user.id, { exercise: m.id, weight: m.w, reps: m.r, rir: row.rir, failure: fail, devil: row.devil });
+    let rp;
+    if (m.devil && !warm) { // drop set: −20 % en cascada, sin descanso
+      const ws = []; let x = m.w; for (let i = 0; i < 3; i++) { x = E.r25(x * 0.8); ws.push(x); }
+      S.drop[m.id] = { step: 0, ws }; rp = { sec: 10, why: `Drop set: baja a ${ws[0]} kg YA (−20 %), sin descansar` };
+    } else rp = restPlan({ id: m.id, t: m.t, r: m.r, rir: row.rir });
+    S.rest = Date.now() + rp.sec * 1000; S.restWhy = rp.why; S.fresh = m.id; S.modal = null; xpToast(xb);
+    if (isPR && !raveOn()) setTimeout(() => toast('🔥 ¡NUEVO PR! +50 XP'), 120);
   },
+  dropsave(d) {
+    const id = d.id, p = S.drop[id]; if (!p) return;
+    const r = val(`dr-${id}-${p.step}`); if (!(r > 0)) return alert('Ingresa las repeticiones');
+    const xb = totalXp(), w = p.ws[p.step];
+    (S.logs[id] ||= []).push({ d: today(), w, r, rir: 0, fail: 'Músculo objetivo', devil: true, t: 'drop' }); store.set('logs', S.logs);
+    saveSet(S.user.id, { exercise: id, weight: w, reps: r, rir: 0, failure: 'Músculo objetivo', devil: true });
+    p.step++; S.fresh = id;
+    const rp = p.step >= 3 ? restPlan({ id, t: 3, r, rir: 0, drop: 'end' }) : { sec: 10, why: `Drop set: baja a ${p.ws[p.step]} kg YA, sin descansar` };
+    if (p.step >= 3) delete S.drop[id];
+    S.rest = Date.now() + rp.sec * 1000; S.restWhy = rp.why; xpToast(xb);
+  },
+  dropskip(d) { delete S.drop[d.id]; },
+  doneex(d) { // marca terminado y pasa al siguiente ejercicio del orden de la rutina
+    const iso = S.routineDate, xb = totalXp(); (S.doneEx[iso] ||= {})[d.id] = true; store.set('doneEx', S.doneEx); delete S.drop[d.id];
+    const cards = routineExercisesForDate(iso).map(exByName).filter(Boolean), nxt = cards.find(c => !S.doneEx[iso][c.id]);
+    S.open = nxt ? nxt.id : null;
+    if (nxt) { const p = transitionPlan(exById(d.id), nxt); S.rest = Date.now() + p.sec * 1000; S.restWhy = p.why; xpToast(xb); }
+    else { S.rest = 0; toast('🏁 ¡Sesión completada! Buen trabajo'); }
+  },
+  undone(d) { delete (S.doneEx[S.routineDate] || {})[d.id]; store.set('doneEx', S.doneEx); S.open = d.id; },
   swap(d) { S.modal = { type: 'swap', id: d.id, alts: [...exById(d.id).alt] }; },
   doswap(d) { d.n ? S.swaps[S.modal.id] = d.n : delete S.swaps[S.modal.id]; S.modal = null; },
   coachtoggle() { S.coachOpen = !S.coachOpen; store.set('coachOpen', S.coachOpen); },
@@ -805,7 +939,7 @@ const ACT = {
     return ACT.nutritionsend();
   },
   step(d) { const i = $('#' + d.f); i.value = Math.max(0, +((parseFloat(i.value) || 0) + +d.s).toFixed(1)); },
-  rest30() { S.rest += 3e4; }, restoff() { S.rest = 0; },
+  rest30() { S.rest += 3e4; }, restoff() { S.rest = 0; S.restWhy = ''; },
   style(d) { S.style = d.k; store.set('style', d.k); },
   profile() {
     const kg = val('pf-kg'), h = val('pf-h'), age = val('pf-a');
@@ -815,10 +949,10 @@ const ACT = {
     persist('profile', 'target', 'weights'); saveBody(S.user.id, { weight: kg });
   },
   async weight() { // auditoría: recalcula objetivos de la semana siguiente con la tendencia real
-    const kg = val('wt'); if (!(kg > 30 && kg < 300)) return alert('Peso inválido');
+    const xb = totalXp(), kg = val('wt'); if (!(kg > 30 && kg < 300)) return alert('Peso inválido');
     S.weights = S.weights.filter(w => w.d !== today()).concat({ d: today(), kg }); saveBody(S.user.id, { weight: kg });
     const a = E.audit({ weights: S.weights, target: S.target, goal: S.profile.goal, raveDates: S.raveDates });
-    S.target = a.target; S.note = a.note; persist('weights', 'target');
+    S.target = a.target; S.note = a.note; persist('weights', 'target'); xpToast(xb);
     coach('audit', { goal: S.profile.goal, target: S.target, resultado: a.note, pesos: S.weights.slice(-8) });
   },
   async analyze() {
@@ -832,7 +966,7 @@ const ACT = {
     } catch (e) { S.msg = LOCAL_MODE ? e.message : 'IA no disponible: ' + e.message + '. Inténtalo de nuevo.'; }
     S.busy = false;
   },
-  confirmmeal() { addMeal(S.preview.items, S.preview.text); S.preview = null; },
+  confirmmeal() { const xb = totalXp(); addMeal(S.preview.items, S.preview.text); S.preview = null; syncHist(); xpToast(xb); },
   discard() { S.preview = null; },
   rave() {
     if (raveOn()) return alert('El bloqueo de PRs (48 h) se mantiene para proteger tu sistema nervioso.');
