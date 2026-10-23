@@ -5,6 +5,7 @@ import * as E from './engine.js';
 
 /* ---------- Utilidades y persistencia local ---------- */
 const $ = s => document.querySelector(s);
+const VERSION = 'v8';
 const esc = t => String(t).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 await hydrate(); // IndexedDB → caché en memoria
 const today = () => new Date().toISOString().slice(0, 10);
@@ -124,7 +125,7 @@ const S = {
   nutritionSectionTab: 'chat',
   muscleSide: 'front',
   routineDate: today(),
-  routineEdits: store.get('routineEdits', {}), dayMuscles: store.get('dayMuscles', {}),
+  routineEdits: store.get('routineEdits', {}), dayMuscles: store.get('dayMuscles', {}), dayRest: store.get('dayRest', {}),
   routineModal: null,
   nutritionPreferences: store.get('nutritionPreferences', {}),
   nutritionChat: freshNutritionChat,
@@ -220,7 +221,7 @@ const lockedView = () => `
 const header = () => `
 <div class="flex justify-between items-center pt-4">
   <div><div class="brand-title font-black neon"><img src="icon-180.png" alt="">AGRESSIVE LIFT</div>
-  <div class="text-xs text-zinc-500">Mesociclo · semana ${mesoWeek()}/${S.meso.weeks} · rotación bloqueada</div></div>
+  <div class="text-xs text-zinc-500">Mesociclo · semana ${mesoWeek()}/${S.meso.weeks} · rotación bloqueada · ${VERSION}</div></div>
   ${LOCAL_MODE ? '' : '<button class="btn ghost" data-act="logout">Salir</button>'}
 </div>
 ${raveOn() ? `<div class="card on mt-3 text-sm">🔒 Modo Rave activo: PRs bloqueados ${Math.ceil((S.rave.prUntil - Date.now()) / 36e5)} h más. Entrena para técnica, no para récords.</div>` : ''}
@@ -254,26 +255,6 @@ function exCard(e) {
   </div>`;
 }
 
-const calendarDays = (month = new Date()) => {
-  const y = month.getFullYear(); const m = month.getMonth();
-  const first = new Date(y, m, 1); const start = new Date(first); start.setDate(first.getDate() - first.getDay());
-  const label = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
-  const days = [];
-  for (let i = 0; i < 42; i++) {
-    const d = new Date(start); d.setDate(start.getDate() + i);
-    const iso = d.toISOString().slice(0, 10);
-    const training = Object.values(S.logs).flat().some(x => x.d === iso);
-    const schedule = S.trainingSchedule || DEFAULT_TRAINING_SCHEDULE;
-    const elapsed = Math.floor((Date.parse(`${iso}T00:00:00Z`) - Date.parse(`${schedule.startDate || today()}T00:00:00Z`)) / 864e5);
-    const cycleLength = Math.max(1, (Number(schedule.workDays) || schedule.days) + (Number(schedule.restDays) || 0));
-    const planned = elapsed >= 0 && (schedule.cycle
-      ? elapsed % cycleLength < (Number(schedule.workDays) || schedule.days)
-      : (schedule.weekdays || DEFAULT_TRAINING_SCHEDULE.weekdays).includes(new Date(`${iso}T00:00:00Z`).getUTCDay()));
-    const current = d.getMonth() === m;
-    days.push({ iso, label: label[d.getDay() === 0 ? 6 : d.getDay() - 1], day: d.getDate(), training, planned, current });
-  }
-  return days;
-};
 
 const isoDate = date => `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
 const shiftIsoDate = (iso, offset) => {
@@ -309,23 +290,24 @@ function routineSessionForDate(iso) {
   const index = sessionIndex % S.trainingPlan.length;
   return { ...S.trainingPlan[index], index };
 }
-const routineExercisesForDate = iso => S.routineEdits[iso] || routineSessionForDate(iso)?.blocks || [];
+const routineExercisesForDate = iso => S.routineEdits[iso] || [];
 
+const dayState = iso => {
+  if (Object.values(S.logs).some(l => l.some(x => x.d === iso))) return 'done';
+  if (S.dayRest[iso]) return 'rest';
+  return (S.routineEdits[iso] || []).length ? 'plan' : '';
+};
 const calendarCard = () => {
-  const month = new Date();
-  const days = calendarDays(month);
-  const active = days.filter(d => d.training).length;
-  const planned = days.filter(d => d.planned).length;
+  const base = new Date(`${S.routineDate}T00:00:00Z`), y = base.getUTCFullYear(), m = base.getUTCMonth();
+  const lead = (new Date(Date.UTC(y, m, 1)).getUTCDay() + 6) % 7, n = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+  const cells = [...Array(lead).fill(null), ...Array.from({ length: n }, (_, i) => isoDate(new Date(Date.UTC(y, m, i + 1))))];
+  const c = { done: 0, plan: 0, rest: 0 }; cells.forEach(x => { const t = x && dayState(x); if (t) c[t]++; });
   return `<div class="card calendar-card">
-    <div class="flex justify-between items-center mb-2">
-      <div>
-        <div class="font-bold text-lg">Calendario de entrenos</div>
-        <div class="text-xs text-zinc-500">${month.toLocaleString('es-ES', { month: 'long', year: 'numeric' })} · ${S.trainingSchedule.days} días · ${esc(S.trainingSchedule.split)}</div>
-      </div>
-      <div class="chip on">${active} hechos · ${planned} plan</div>
-    </div>
-    <div class="calendar-grid">${['L','M','X','J','V','S','D'].map(n => `<div class="calendar-head">${n}</div>`).join('')}${days.map(d => `<div class="calendar-day ${d.planned ? 'planned' : ''} ${d.training ? 'train' : ''} ${d.current ? 'current' : 'muted'}" title="${d.iso}${d.planned ? ' · programado' : ''}${d.training ? ' · completado' : ''}">${d.day}</div>`).join('')}</div>
-    <div class="text-xs text-zinc-500 mt-2">Borde rojo: programado · rojo sólido: entreno registrado</div>
+    <div class="flex justify-between items-center mb-2"><div><div class="font-bold text-lg">Calendario</div>
+    <div class="text-xs text-zinc-500">${base.toLocaleString('es-ES', { month: 'long', year: 'numeric', timeZone: 'UTC' })} · toca un día para elegirlo</div></div>
+    <div class="chip on">${c.done + c.plan} entrenos · ${c.rest} descansos</div></div>
+    <div class="calendar-grid">${['L', 'M', 'X', 'J', 'V', 'S', 'D'].map(l => `<div class="calendar-head">${l}</div>`).join('')}${cells.map(x => x ? `<button class="calendar-day ${dayState(x)} ${x === S.routineDate ? 'sel' : ''} ${x === today() ? 'today' : ''}" data-act="routinedate" data-date="${x}">${Number(x.slice(8))}${S.dayRest[x] ? '<small>😴</small>' : ''}</button>` : '<div></div>').join('')}</div>
+    <div class="text-xs text-zinc-500 mt-2">Rojo sólido: entreno hecho · borde rojo: planeado · 😴 descanso</div>
   </div>`;
 };
 
@@ -397,7 +379,7 @@ const routineDayPicker = () => {
 const recentWarn = k => { for (const off of [-1, -2]) if ((S.dayMuscles[shiftIsoDate(S.routineDate, off)] || []).includes(k)) return -off; return 0; };
 const dayBuilder = () => {
   const sel = S.dayMuscles[S.routineDate] || [];
-  return `<div class="card">
+  return `<div class="mt-3">
   <div class="font-bold mb-1">¿Qué entrenas este día?</div>
   <div class="text-xs text-zinc-500 mb-2">Elige el día arriba y marca los músculos: te armo 2 ejercicios por músculo.</div>
   <div class="flex gap-2 mb-2">${Object.keys(PRESETS).map(p => `<button class="chip flex-1" data-act="daypreset" data-p="${p}">${p}</button>`).join('')}</div>
@@ -405,20 +387,21 @@ const dayBuilder = () => {
   <button class="btn fill w-full mt-3" data-act="daygenerate">Generar rutina (${sel.length * 2} ejercicios)</button></div>`;
 };
 const routineDayPanel = () => {
-  const session = routineSessionForDate(S.routineDate);
-  const exercises = routineExercisesForDate(S.routineDate);
-  const date = new Date(`${S.routineDate}T00:00:00Z`).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' });
-  const title = session?.day || (exercises.length ? 'Sesión personalizada' : 'Descanso programado');
+  const iso = S.routineDate, exercises = routineExercisesForDate(iso), rest = !!S.dayRest[iso];
+  const date = new Date(`${iso}T00:00:00Z`).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' });
+  const muscles = (S.dayMuscles[iso] || []).map(k => MUSCLES[k].n).join(' · ');
   return `<div class="card routine-day-panel">
-    <div class="flex justify-between items-center gap-2"><div><div class="font-bold text-lg capitalize">${date}</div><div class="text-sm neon">${esc(title)}</div></div>
-      <button class="btn" data-act="addroutineexercise">＋ Añadir ejercicio</button></div>
-    ${session?.focus ? `<div class="text-xs text-zinc-500 mt-2">${esc(session.focus)}</div>` : ''}
+    <div class="font-bold text-lg capitalize">${date}</div>
+    <div class="text-sm neon">${rest ? '😴 Día de descanso' : exercises.length ? esc(muscles || 'Sesión personalizada') : 'Sin definir: elige Entreno o Descanso'}</div>
+    <div class="grid grid-cols-2 gap-2 mt-3"><button class="chip ${rest ? '' : 'on'}" data-act="daytype" data-t="train">🏋️ Entreno</button><button class="chip ${rest ? 'on' : ''}" data-act="daytype" data-t="rest">😴 Descanso</button></div>
+    ${rest ? '' : `${dayBuilder()}
+    <div class="flex justify-between items-center mt-3"><span class="text-xs text-zinc-500">Ejercicios del día</span><button class="btn" data-act="addroutineexercise">＋ Añadir ejercicio</button></div>
     <div class="routine-exercise-list">${exercises.map((exercise, index) => `<div class="routine-exercise-row">
       <span class="routine-exercise-name">${esc(exercise)}</span>
-      <button class="icon-btn" data-act="exercisevideo" data-index="${index}" aria-label="Ver demostración de ${esc(exercise)}" title="Ver demostración">▶</button>
+      <button class="icon-btn" data-act="exercisevideo" data-index="${index}" aria-label="Ver ${esc(exercise)}" title="Ver ejercicio">▶</button>
       <button class="icon-btn" data-act="editroutineexercise" data-index="${index}" aria-label="Editar ${esc(exercise)}" title="Editar">✎</button>
       <button class="icon-btn" data-act="removeroutineexercise" data-index="${index}" aria-label="Eliminar ${esc(exercise)}" title="Eliminar">×</button>
-    </div>`).join('') || `<div class="text-sm text-zinc-500 py-2">Día libre. Puedes añadir una sesión personalizada si lo necesitas.</div>`}</div>
+    </div>`).join('') || '<div class="text-sm text-zinc-500 py-2">Aún no hay ejercicios: marca músculos y pulsa Generar.</div>'}</div>`}
   </div>`;
 };
 
@@ -431,12 +414,10 @@ const loggingCards = () => {
 };
 const trainingRoutinePanel = () => `<div class="routine-panel">
   
-  <div class="plan-title">${S.trainingSchedule.days} días · ${esc(S.trainingSchedule.split)}</div>
   ${routineDayPicker()}
-  ${dayBuilder()}
   ${routineDayPanel()}
-  <div class="training-top">${calendarCard()}</div>
   ${loggingCards()}
+  <div class="training-top mt-3">${calendarCard()}</div>
 </div>`;
 
 const trainView = () => `<div class="section-subtabs" role="tablist" aria-label="Sección Entrenar">
@@ -558,6 +539,43 @@ const exerciseMotionType = name => {
   return 'push';
 };
 
+/* ---------- Imágenes reales del ejercicio: free-exercise-db (dominio público) ---------- */
+const EXDB_URL = 'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/dist/exercises.json';
+const EXIMG = 'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/';
+const EN = { // nombre en español → nombres probables en inglés del catálogo
+  'press-inclinado-con-mancuernas': ['incline dumbbell press'], 'aperturas-en-polea': ['cable crossover', 'cable fly', 'low cable crossover'],
+  'jalon-al-pecho': ['wide-grip lat pulldown', 'lat pulldown'], 'remo-con-apoyo-pectoral': ['seated cable rows', 'machine row', 'bent over barbell row'],
+  'press-militar-en-maquina': ['machine shoulder (military) press', 'shoulder press'], 'elevaciones-laterales-en-polea': ['cable seated lateral raise', 'side lateral raise', 'lateral raise'],
+  'curl-inclinado-con-mancuernas': ['incline dumbbell curl', 'alternate incline dumbbell curl'], 'curl-predicador': ['preacher curl', 'ez-bar preacher curl'],
+  'extension-de-triceps-en-polea': ['triceps pushdown', 'triceps pushdown rope attachment'], 'press-frances-con-barra-z': ['ez-bar skullcrusher', 'lying triceps press'],
+  'crunch-en-polea': ['cable crunch', 'kneeling cable crunch'], 'elevacion-de-piernas-colgado': ['hanging leg raise'],
+  'prensa-de-piernas': ['leg press'], 'extension-de-cuadriceps': ['leg extensions', 'leg extension'], 'curl-femoral-sentado': ['seated leg curl'],
+  'curl-femoral-tumbado': ['lying leg curls'], 'peso-muerto-rumano': ['romanian deadlift'], 'hip-thrust': ['barbell hip thrust', 'hip thrust'],
+  'sentadilla-bulgara': ['bulgarian split squat', 'split squat with dumbbells', 'single leg squat'], 'gemelo-de-pie': ['standing calf raises', 'standing calf raise'],
+  'gemelo-sentado': ['seated calf raise'], 'press-de-pecho-en-maquina': ['machine bench press', 'chest press machine'], 'pullover-en-polea': ['straight-arm pulldown', 'pullover'],
+  'face-pull': ['face pull'], 'hack-squat': ['hack squat'], 'press-arnold': ['arnold dumbbell press'],
+};
+const norm = t => t.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+function matchEx(db, name) {
+  const qs = EN[slug(clean(name))] || [];
+  for (const q of qs) { const hit = db.find(r => norm(r[0]) === norm(q)); if (hit) return hit; }
+  let best = null, bs = 0;
+  for (const q of qs) { const qt = new Set(norm(q).split(' ')); for (const r of db) { const rt = new Set(norm(r[0]).split(' ')); let k = 0; qt.forEach(w => rt.has(w) && k++); const sc = k / Math.max(qt.size, rt.size); if (sc > bs) { bs = sc; best = r; } } }
+  return bs >= 0.6 ? best : null;
+}
+async function loadExMedia(name) {
+  let media = null;
+  try {
+    let db = store.get('exdb', null);
+    if (!db) { // se descarga una vez (~100 KB tras compactar) y queda guardada en el teléfono
+      const r = await fetch(EXDB_URL); if (!r.ok) throw new Error('db');
+      db = (await r.json()).filter(x => x.images?.length).map(x => [x.name, x.images[0], x.images[1] || x.images[0]]); store.set('exdb', db);
+    }
+    const hit = matchEx(db, name); if (hit) media = { n: hit[0], a: EXIMG + hit[1], b: EXIMG + hit[2] };
+  } catch {}
+  if (S.modal?.type === 'exercisevideo' && S.modal.name === name) { S.modal = { ...S.modal, loading: false, media }; render(); }
+}
+
 const sheet = () => {
   const m = S.modal; if (!m) return '';
   if (m.type === 'rir') return `<div class="sheet"><div><div class="font-bold mb-3">¿Cuántas reps te quedaban? (RIR)</div>
@@ -574,13 +592,13 @@ const sheet = () => {
     <div class="flex gap-2 mt-3"><button class="btn fill flex-1" data-act="saveRoutineExercise">Guardar</button><button class="btn ghost flex-1" data-act="closemodal">Cancelar</button></div>
   </div></div>`;
   if (m.type === 'exercisevideo') return `<div class="sheet"><div class="exercise-modal">
-    <div class="flex justify-between items-start gap-2"><div><div class="text-xs text-zinc-500 uppercase tracking">Demostración animada</div><div class="font-bold text-lg">${esc(m.name)}</div></div><button class="icon-btn" data-act="closemodal" aria-label="Cerrar">×</button></div>
-    <div class="motion-stage mt-3"><svg class="motion-demo-svg motion-${m.motion}" viewBox="0 0 260 170" role="img" aria-label="Animación esquemática de la ejecución de ${esc(m.name)}">
+    <div class="flex justify-between items-start gap-2"><div><div class="text-xs text-zinc-500 uppercase tracking">Cómo se hace</div><div class="font-bold text-lg">${esc(m.name)}</div></div><button class="icon-btn" data-act="closemodal" aria-label="Cerrar">×</button></div>
+    <div class="motion-stage mt-3">${m.media ? `<div class="exmedia"><img src="${m.media.a}" alt="${esc(m.name)} posición inicial"><img class="f1" src="${m.media.b}" alt="${esc(m.name)} posición final"></div><div class="text-xs text-zinc-500 mt-1">${esc(m.media.n)} · imágenes de free-exercise-db</div>` : m.loading ? '<div class="text-sm text-zinc-500 py-8 text-center">Buscando imágenes del ejercicio…</div>' : `<svg class="motion-demo-svg motion-${m.motion}" viewBox="0 0 260 170" role="img" aria-label="Animación esquemática de la ejecución de ${esc(m.name)}">
       <line class="motion-bench" x1="58" y1="132" x2="202" y2="132"/>
       <g class="motion-figure"><circle class="motion-outline" cx="130" cy="31" r="12"/><path class="motion-outline" d="M130 44 L130 99 M130 57 L98 73 L80 61 M130 57 L162 73 L180 61 M130 99 L105 137 M130 99 L155 137"/></g>
       <g class="motion-bar"><line x1="55" y1="55" x2="205" y2="55"/><line x1="69" y1="46" x2="69" y2="64"/><line x1="191" y1="46" x2="191" y2="64"/><circle cx="55" cy="55" r="5"/><circle cx="205" cy="55" r="5"/></g>
       <path class="motion-arrow" d="M218 78 V45 M212 52 L218 44 L224 52"/>
-    </svg></div>
+    </svg>`}</div>
     <p class="text-sm text-zinc-400 mt-2">Controla la fase de bajada, mantén la trayectoria estable y termina cada repetición sin perder la postura.</p>
     <a class="btn fill w-full mt-3" href="${videoUrl(m.name)}" target="_blank" rel="noopener">▶ Ver video real en YouTube ↗</a>
     <button class="btn ghost w-full mt-3" data-act="closemodal">Cerrar</button>
@@ -633,14 +651,7 @@ const ACT = {
     S.nutritionSectionTab = d.tab === 'plan' ? 'plan' : 'chat';
   },
   muscleside(d) { S.muscleSide = d.side === 'back' ? 'back' : 'front'; },
-  routinedate(d) {
-    S.routineDate = d.date;
-    const session = routineSessionForDate(d.date);
-    const name = (session?.day || '').toLowerCase();
-    if (/push|torso|full body/.test(name)) S.tab = 'push';
-    else if (/pull/.test(name)) S.tab = 'pull';
-    else if (/leg|pierna/.test(name)) S.tab = 'legs';
-  },
+  routinedate(d) { S.routineDate = d.date; },
   routineweek(d) {
     const date = shiftIsoDate(S.routineDate, Number(d.d) || 0);
     ACT.routinedate({ date });
@@ -667,13 +678,16 @@ const ACT = {
   },
   exercisevideo(d) {
     const name = d.exercise || routineExercisesForDate(S.routineDate)[Number(d.index)] || 'Ejercicio';
-    S.modal = { type: 'exercisevideo', name, motion: exerciseMotionType(name) };
+    S.modal = { type: 'exercisevideo', name, motion: exerciseMotionType(name), loading: true, media: null };
+    loadExMedia(name);
   },
   closemodal() { S.modal = null; },
   daymuscle(d) { const a = S.dayMuscles[S.routineDate] || (S.dayMuscles[S.routineDate] = []), i = a.indexOf(d.k); i >= 0 ? a.splice(i, 1) : a.push(d.k); store.set('dayMuscles', S.dayMuscles); },
+  daytype(d) { if (d.t === 'rest') S.dayRest[S.routineDate] = true; else delete S.dayRest[S.routineDate]; store.set('dayRest', S.dayRest); },
   daypreset(d) { S.dayMuscles[S.routineDate] = [...PRESETS[d.p]]; store.set('dayMuscles', S.dayMuscles); },
   daygenerate() {
     const ks = S.dayMuscles[S.routineDate] || []; if (!ks.length) return alert('Elige al menos un músculo');
+    delete S.dayRest[S.routineDate]; store.set('dayRest', S.dayRest);
     S.routineEdits[S.routineDate] = ks.flatMap(k => CATALOG[k]); store.set('routineEdits', S.routineEdits);
   },
   tab: d => { S.tab = d.t; S.open = null; }, toggle: d => S.open = S.open === d.id ? null : d.id,
@@ -999,7 +1013,11 @@ document.addEventListener('keydown', e => {
 });
 
 /* ---------- Arranque ---------- */
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+if ('serviceWorker' in navigator) {
+  const had = !!navigator.serviceWorker.controller; // solo recarga si ya había una versión anterior instalada
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (had && !sessionStorage.alReload) { sessionStorage.alReload = 1; location.reload(); } });
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
 if (CONFIG_OK) {
   sb.auth.onAuthStateChange((ev, session) => { if (ev !== 'TOKEN_REFRESHED') gate(session); });
   let lastCheck = Date.now(); // re-verifica la licencia al volver a la app (>5 min)
