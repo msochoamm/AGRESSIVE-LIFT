@@ -5,7 +5,7 @@ import * as E from './engine.js';
 
 /* ---------- Utilidades y persistencia local ---------- */
 const $ = s => document.querySelector(s);
-const VERSION = 'v8';
+const VERSION = 'v9';
 const esc = t => String(t).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 await hydrate(); // IndexedDB → caché en memoria
 const today = () => new Date().toISOString().slice(0, 10);
@@ -125,7 +125,7 @@ const S = {
   nutritionSectionTab: 'chat',
   muscleSide: 'front',
   routineDate: today(),
-  routineEdits: store.get('routineEdits', {}), dayMuscles: store.get('dayMuscles', {}), dayRest: store.get('dayRest', {}),
+  routineEdits: store.get('routineEdits', {}), dayMuscles: store.get('dayMuscles', {}), dayRest: store.get('dayRest', {}), ytkey: store.get('ytkey', ''), ytcache: store.get('ytcache', {}),
   routineModal: null,
   nutritionPreferences: store.get('nutritionPreferences', {}),
   nutritionChat: freshNutritionChat,
@@ -576,6 +576,32 @@ async function loadExMedia(name) {
   if (S.modal?.type === 'exercisevideo' && S.modal.name === name) { S.modal = { ...S.modal, loading: false, media }; render(); }
 }
 
+/* ---------- Video del ejercicio DENTRO de la app (YouTube Data API + reproductor incrustado) ---------- */
+async function loadYT(name) {
+  const set = p => { if (S.modal?.type === 'exercisevideo' && S.modal.name === name) { S.modal = { ...S.modal, ytLoading: false, ...p }; render(); } };
+  if (!S.ytkey) return;
+  const id = slug(clean(name));
+  let list = S.ytcache[id];
+  if (!list) {
+    try {
+      const q = new URLSearchParams({ part: 'snippet', type: 'video', videoEmbeddable: 'true', videoDuration: 'short', maxResults: '5', relevanceLanguage: 'es', safeSearch: 'strict', q: `cómo hacer ${clean(name)} técnica correcta ejercicio gimnasio`, key: S.ytkey });
+      const r = await fetch('https://www.googleapis.com/youtube/v3/search?' + q), j = await r.json();
+      if (!r.ok) throw new Error(r.status === 403 ? 'La clave no tiene permiso o se acabó la cuota de hoy.' : 'La clave de YouTube no es válida.');
+      list = (j.items || []).filter(v => v.id?.videoId).map(v => ({ id: v.id.videoId, title: v.snippet.title }));
+      if (!list.length) throw new Error('No se encontró video para este ejercicio.');
+      S.ytcache[id] = list; store.set('ytcache', S.ytcache);
+    } catch (e) { return set({ ytErr: e.message === 'Failed to fetch' ? 'Sin conexión: no se pudo buscar el video.' : e.message }); }
+  }
+  set({ ytList: list, ytI: 0, yt: list[0], ytErr: '' });
+}
+const ytBlock = m => {
+  if (m.yt) return `<div class="ytwrap mt-3"><iframe src="https://www.youtube-nocookie.com/embed/${m.yt.id}?playsinline=1&rel=0&modestbranding=1" title="${esc(m.yt.title)}" allow="accelerometer; encrypted-media; picture-in-picture" allowfullscreen></iframe></div>
+    <div class="flex justify-between items-center gap-2 mt-1"><span class="text-xs text-zinc-500 truncate">${esc(m.yt.title)}</span>${m.ytList.length > 1 ? '<button class="chip !px-3" data-act="ytnext">Otro video ↻</button>' : ''}</div>`;
+  if (m.ytLoading) return '<div class="text-sm text-zinc-500 mt-3 text-center py-4">Buscando video…</div>';
+  if (!S.ytkey) return `<div class="card !p-2 mt-3 text-sm"><div class="font-bold mb-1">Activar videos dentro de la app</div><div class="text-zinc-400 mb-2">Pega tu clave gratuita de YouTube (se guarda solo en tu teléfono).</div><input id="ytkey" placeholder="Clave API de YouTube" autocomplete="off"><button class="btn w-full mt-2" data-act="ytsave">Activar videos</button></div>`;
+  return `<div class="card !p-2 mt-3 text-sm"><span class="text-red-400">${esc(m.ytErr || 'No se encontró video.')}</span> <button class="underline" data-act="ytclear">Cambiar clave</button></div>`;
+};
+
 const sheet = () => {
   const m = S.modal; if (!m) return '';
   if (m.type === 'rir') return `<div class="sheet"><div><div class="font-bold mb-3">¿Cuántas reps te quedaban? (RIR)</div>
@@ -593,14 +619,14 @@ const sheet = () => {
   </div></div>`;
   if (m.type === 'exercisevideo') return `<div class="sheet"><div class="exercise-modal">
     <div class="flex justify-between items-start gap-2"><div><div class="text-xs text-zinc-500 uppercase tracking">Cómo se hace</div><div class="font-bold text-lg">${esc(m.name)}</div></div><button class="icon-btn" data-act="closemodal" aria-label="Cerrar">×</button></div>
-    <div class="motion-stage mt-3">${m.media ? `<div class="exmedia"><img src="${m.media.a}" alt="${esc(m.name)} posición inicial"><img class="f1" src="${m.media.b}" alt="${esc(m.name)} posición final"></div><div class="text-xs text-zinc-500 mt-1">${esc(m.media.n)} · imágenes de free-exercise-db</div>` : m.loading ? '<div class="text-sm text-zinc-500 py-8 text-center">Buscando imágenes del ejercicio…</div>' : `<svg class="motion-demo-svg motion-${m.motion}" viewBox="0 0 260 170" role="img" aria-label="Animación esquemática de la ejecución de ${esc(m.name)}">
+    ${ytBlock(m)}<div class="motion-stage mt-3 ${m.yt ? 'hidden' : ''}">${m.media ? `<div class="exmedia"><img src="${m.media.a}" alt="${esc(m.name)} posición inicial"><img class="f1" src="${m.media.b}" alt="${esc(m.name)} posición final"></div><div class="text-xs text-zinc-500 mt-1">${esc(m.media.n)} · imágenes de free-exercise-db</div>` : m.loading ? '<div class="text-sm text-zinc-500 py-8 text-center">Buscando imágenes del ejercicio…</div>' : `<svg class="motion-demo-svg motion-${m.motion}" viewBox="0 0 260 170" role="img" aria-label="Animación esquemática de la ejecución de ${esc(m.name)}">
       <line class="motion-bench" x1="58" y1="132" x2="202" y2="132"/>
       <g class="motion-figure"><circle class="motion-outline" cx="130" cy="31" r="12"/><path class="motion-outline" d="M130 44 L130 99 M130 57 L98 73 L80 61 M130 57 L162 73 L180 61 M130 99 L105 137 M130 99 L155 137"/></g>
       <g class="motion-bar"><line x1="55" y1="55" x2="205" y2="55"/><line x1="69" y1="46" x2="69" y2="64"/><line x1="191" y1="46" x2="191" y2="64"/><circle cx="55" cy="55" r="5"/><circle cx="205" cy="55" r="5"/></g>
       <path class="motion-arrow" d="M218 78 V45 M212 52 L218 44 L224 52"/>
     </svg>`}</div>
     <p class="text-sm text-zinc-400 mt-2">Controla la fase de bajada, mantén la trayectoria estable y termina cada repetición sin perder la postura.</p>
-    <a class="btn fill w-full mt-3" href="${videoUrl(m.name)}" target="_blank" rel="noopener">▶ Ver video real en YouTube ↗</a>
+    <a class="btn ghost w-full mt-3" href="${videoUrl(m.name)}" target="_blank" rel="noopener">Abrir búsqueda en YouTube ↗</a>
     <button class="btn ghost w-full mt-3" data-act="closemodal">Cerrar</button>
   </div></div>`;
   return '';
@@ -678,10 +704,13 @@ const ACT = {
   },
   exercisevideo(d) {
     const name = d.exercise || routineExercisesForDate(S.routineDate)[Number(d.index)] || 'Ejercicio';
-    S.modal = { type: 'exercisevideo', name, motion: exerciseMotionType(name), loading: true, media: null };
-    loadExMedia(name);
+    S.modal = { type: 'exercisevideo', name, motion: exerciseMotionType(name), loading: true, media: null, ytLoading: !!S.ytkey };
+    loadExMedia(name); loadYT(name);
   },
   closemodal() { S.modal = null; },
+  ytsave() { const k = ($('#ytkey')?.value || '').trim(); if (k.length < 20) return alert('Pega la clave completa'); S.ytkey = k; store.set('ytkey', k); if (S.modal?.type === 'exercisevideo') { S.modal = { ...S.modal, ytLoading: true, ytErr: '' }; loadYT(S.modal.name); } },
+  ytclear() { S.ytkey = ''; S.ytcache = {}; store.set('ytkey', ''); store.set('ytcache', {}); if (S.modal) S.modal = { ...S.modal, yt: null, ytErr: '', ytLoading: false }; },
+  ytnext() { const m = S.modal, i = (m.ytI + 1) % m.ytList.length; S.modal = { ...m, ytI: i, yt: m.ytList[i] }; },
   daymuscle(d) { const a = S.dayMuscles[S.routineDate] || (S.dayMuscles[S.routineDate] = []), i = a.indexOf(d.k); i >= 0 ? a.splice(i, 1) : a.push(d.k); store.set('dayMuscles', S.dayMuscles); },
   daytype(d) { if (d.t === 'rest') S.dayRest[S.routineDate] = true; else delete S.dayRest[S.routineDate]; store.set('dayRest', S.dayRest); },
   daypreset(d) { S.dayMuscles[S.routineDate] = [...PRESETS[d.p]]; store.set('dayMuscles', S.dayMuscles); },
