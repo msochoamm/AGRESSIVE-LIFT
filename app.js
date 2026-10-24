@@ -87,6 +87,17 @@ const GOALS = {
   'fuerza': { weeks: 8, main: '5x3-5', sec: '3x6-8', acc: '3x8-10', rir: 'RIR 1-2', rest: '3-5 min en básicos', cardio: '',
     nutri: 'mantenimiento o superávit leve (+100-250 kcal), proteína 1.6-2.2 g/kg' },
 };
+const DIET = { cut: { n: 'Definición', weeks: 10, t: 'déficit moderado (~0.5-1 % del peso por semana) con proteína alta' },
+  maint: { n: 'Mantenimiento', weeks: 8, t: 'calorías estables y proteína suficiente' },
+  bulk: { n: 'Volumen limpio', weeks: 12, t: 'superávit pequeño (+5-10 %), subiendo ~0.25-0.5 % del peso por semana' } };
+const dietLockActive = () => !!S.dietLock && dAdd(0) <= S.dietLock.until;
+const makeDietLock = goal => ({ goal, start: dAdd(0), until: dAdd(DIET[goal].weeks * 7 - 1), weeks: DIET[goal].weeks });
+const ensureDietLock = () => { if (S.profile?.goal && DIET[S.profile.goal] && !S.dietLock) { S.dietLock = makeDietLock(S.profile.goal); store.set('dietLock', S.dietLock); } };
+const dietLockCard = () => { ensureDietLock(); const L = S.dietLock; if (!L) return '';
+  const d = DIET[L.goal], left = Math.max(0, Math.ceil((Date.parse(L.until + 'T12:00:00') - Date.now()) / 6048e5));
+  return dietLockActive()
+    ? `<div class="card"><div class="font-bold">🔒 Tu dieta será ${d.n.toUpperCase()} por ${L.weeks} semanas</div><div class="text-sm text-zinc-400 mt-1">Hasta el ${fmtLong(L.until)} · te ${left === 1 ? 'queda 1 semana' : 'quedan ' + left + ' semanas'}. Estrategia: ${d.t}. El tipo de dieta no se puede cambiar hasta cumplir el objetivo; lo que sí se ajusta solo cada semana son tus calorías según tu peso real.</div></div>`
+    : `<div class="card"><div class="font-bold">✅ Terminaste tu fase de ${d.n.toLowerCase()}</div><div class="text-sm text-zinc-400 mt-1">Ya puedes elegir un nuevo objetivo.</div><button class="btn fill w-full mt-2" data-act="dietnew">Elegir nuevo objetivo</button></div>`; };
 const goalKey = () => GOALS[S.trainingPreferences.goal] ? S.trainingPreferences.goal : 'hipertrofia';
 const makeLock = () => { const gk = goalKey(), g = GOALS[gk], sc = S.trainingSchedule || {};
   S.trainingPreferences.goal = gk; store.set('trainingPreferences', S.trainingPreferences);
@@ -147,7 +158,7 @@ const S = {
   trainingPlan: savedTrainingPlan,
   trainingSchedule: savedTrainingSchedule || DEFAULT_TRAINING_SCHEDULE,
   trainingConfigured: savedTrainingConfigured,
-  planLock: store.get('planLock', null),
+  planLock: store.get('planLock', null), dietLock: store.get('dietLock', null),
   onboarded: store.get('onboarded', savedTrainingConfigured),
   trainingPreferences: store.get('trainingPreferences', {}),
   trainingSectionTab: 'routine',
@@ -374,7 +385,7 @@ const calendarCard = () => {
 const profileCard = () => `<div class="card"><div class="font-bold mb-2">1 · Perfil y objetivo</div>
   <div class="grid grid-cols-2 gap-2"><input id="pf-kg" type="number" inputmode="decimal" placeholder="Peso kg"><input id="pf-h" type="number" inputmode="numeric" placeholder="Altura cm">
   <input id="pf-a" type="number" inputmode="numeric" placeholder="Edad"><select id="pf-s"><option value="m">Hombre</option><option value="f">Mujer</option></select></div>
-  <select id="pf-g" class="mt-2"><option value="cut">Definición (bajar grasa)</option><option value="maint">Mantenimiento</option><option value="bulk">Volumen (ganar músculo)</option></select>
+  <select id="pf-g" class="mt-2"><option value="" disabled selected>Elige tu objetivo…</option><option value="cut">Definición (bajar grasa)</option><option value="maint">Mantenimiento</option><option value="bulk">Volumen (ganar músculo)</option></select><div class="text-xs text-zinc-500 mt-1">🔒 Al calcular, el tipo de dieta queda fijo: definición 10 semanas · volumen 12 · mantenimiento 8.</div>
   <button class="btn fill w-full mt-2" data-act="profile">Calcular mis macros</button></div>`;
 const nOn = (k, v) => { const c = S.nutritionPreferences[k]; return Array.isArray(c) ? c.includes(v) : String(c) === v; };
 const nGroup = q => `<div class="nq"><div class="nq-t">${q.q}${q.multi ? ' <span class="text-zinc-500">(varias)</span>' : ''}</div><div class="quick-prompts !mt-1">${q.opts.map(([v, l]) => `<button class="chip ${nOn(q.k, v) ? 'on' : ''}" data-act="nopt" data-k="${q.k}" data-v="${v}">${l}</button>`).join('')}</div></div>`;
@@ -430,6 +441,7 @@ const planCards = () => {
     <div class="daytabs">${DN.map((d, i) => `<button class="chip ${day === i ? 'on' : ''}" data-act="menuday" data-i="${i}">${d}</button>`).join('')}</div>
     ${meals.map((m, i) => `<div class="meal"><div class="flex justify-between items-start gap-2"><div class="min-w-0"><div class="text-xs neon uppercase">${m.slot}</div><div class="font-bold leading-tight">${esc(m.name)}</div></div><span class="mealtag">${(PREP[m.prep] || PREP.cocinar)(m.mins)}</span></div>
       <div class="text-sm text-zinc-400 mt-1">${m.items.map(it => esc(it.text)).join(' · ')}</div>
+      ${(m.steps || []).length ? `<details class="mt-1"><summary class="text-sm neon" style="min-height:36px;display:flex;align-items:center">📖 Ver preparación</summary><ol class="strat" style="list-style:decimal;padding-left:18px">${m.steps.map(x => `<li>${esc(x)}</li>`).join('')}</ol></details>` : ''}
       <div class="flex justify-between items-center mt-1"><span class="text-xs text-zinc-500">${m.k} kcal · P ${m.p} · C ${m.c} · G ${m.f}</span><button class="chip !px-3" data-act="mealadd" data-d="${day}" data-i="${i}">＋ Registrar</button></div></div>`).join('') || '<div class="text-sm text-zinc-500">No pude armar el menú con esas restricciones: amplía las proteínas o el tiempo.</div>'}
     <div class="text-xs text-zinc-400 mt-2">Día: <b class="text-white">${tot.k}</b> kcal · P ${tot.p} · C ${tot.c} · G ${tot.f} <span class="text-zinc-500">(meta ${t.kcal} · P ${t.p} · C ${t.c} · G ${t.f})</span></div>
     ${menu.notes.map(n => `<div class="text-xs text-zinc-500 mt-1">ℹ️ ${esc(n)}</div>`).join('')}
@@ -551,13 +563,14 @@ const foodView = () => {
   const profileSetup = !S.target ? `<div class="card"><div class="font-bold mb-2">Perfil inicial</div>
   <div class="grid grid-cols-2 gap-2"><input id="pf-kg" type="number" inputmode="decimal" placeholder="Peso kg"><input id="pf-h" type="number" inputmode="numeric" placeholder="Altura cm">
   <input id="pf-a" type="number" inputmode="numeric" placeholder="Edad"><select id="pf-s"><option value="m">Hombre</option><option value="f">Mujer</option></select></div>
-  <select id="pf-g" class="mt-2"><option value="cut">Definición</option><option value="maint">Mantenimiento</option><option value="bulk">Volumen</option></select>
+  <select id="pf-g" class="mt-2"><option value="" disabled selected>Elige tu objetivo…</option><option value="cut">Definición</option><option value="maint">Mantenimiento</option><option value="bulk">Volumen</option></select><div class="text-xs text-zinc-500 mt-1">🔒 Al calcular, el tipo de dieta queda fijo: definición 10 semanas · volumen 12 · mantenimiento 8.</div>
   <button class="btn fill w-full mt-2" data-act="profile">Calcular objetivos</button></div>` : '';
   if (!S.target) return `${tabs}${profileSetup}<div class="card text-sm text-zinc-400">Configura tus macros para abrir el plan. Tus hábitos y preferencias ya se guardaron desde el chat.</div>`;
   const b = budget(today()), sc = E.scale(S.target, b), m = S.macros, pv = S.preview;
   return `
 ${tabs}
 ${profileSetup}
+${dietLockCard()}
 <div class="card"><div class="font-bold">Hoy: ${m.k} / ${b} kcal${S.adj[today()] ? ` <span class="text-xs neon">(${S.adj[today()] > 0 ? '+' : ''}${S.adj[today()]} ajuste)</span>` : ''}</div>
   <div class="text-sm text-zinc-400">Quedan: <b class="text-white">${sc.kcal - m.k} kcal</b> · P ${sc.p - m.p} · C ${sc.c - m.c} · G ${sc.f - m.f}</div>
   <div class="h-2 bg-zinc-900 mt-2 rounded"><div class="h-2 rounded" style="width:${Math.min(100, m.k / b * 100)}%;background:#ff0033"></div></div></div>
@@ -1057,6 +1070,7 @@ const ACT = {
   },
   nutriplan() { if (N.ready(S.nutritionPreferences, !!S.target)) { S.nutritionSectionTab = 'plan'; toast('✅ Plan nutricional listo'); } },
   menuday(d) { S.menuDay = +d.i || 0; },
+  dietnew() { if (dietLockActive()) return; S.dietLock = null; S.target = null; S.profile = null; store.set('dietLock', null); persist('profile', 'target'); },
   menuregen() { S.menuSeed++; store.set('menuSeed', S.menuSeed); },
   mealadd(d) {
     const m = currentMenu().days[+d.d]?.[+d.i]; if (!m) return;
@@ -1073,7 +1087,9 @@ const ACT = {
   profile() {
     const kg = val('pf-kg'), h = val('pf-h'), age = val('pf-a');
     if (!(kg > 30 && h > 120 && age > 13)) return alert('Completa peso, altura y edad');
-    S.profile = { h, age, sex: $('#pf-s').value, goal: $('#pf-g').value };
+    const goal = $('#pf-g').value; if (!DIET[goal]) return alert('Elige tu objetivo: definición, volumen o mantenimiento');
+    if (dietLockActive() && S.dietLock.goal !== goal) return alert(`🔒 Tu dieta es ${DIET[S.dietLock.goal].n} hasta el ${fmtLong(S.dietLock.until)}. No se puede cambiar antes.`);
+    S.profile = { h, age, sex: $('#pf-s').value, goal }; if (!dietLockActive()) { S.dietLock = makeDietLock(goal); store.set('dietLock', S.dietLock); }
     S.target = E.initial({ kg, ...S.profile }); S.weights = [{ d: today(), kg }];
     persist('profile', 'target', 'weights'); saveBody(S.user.id, { weight: kg });
   },

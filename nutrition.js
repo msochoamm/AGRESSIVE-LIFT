@@ -153,6 +153,37 @@ const TPL = [
   { id: 's-atun', slot: 'snack', name: 'Atún con arepa', prep: 'rapido', mins: 3, p: { food: 'atun' }, c: 'arepa', fixed: [], fat: 'mani', tags: [], needs: 'atun' },
   { id: 's-sandwich', slot: 'snack', name: 'Sándwich de {P} desmechado', prep: 'nevera', mins: 3, p: { pool: true, only: ['muslo', 'pechuga', 'atun', 'res', 'cerdo'] }, c: 'pan', fixed: [], fat: 'mani', tags: ['gluten'] },
 ];
+
+/* Recetas de preparación por plantilla. {P} = proteína del día. Las cantidades son las que muestra cada comida. */
+const COOK_P = 'Sazona {P} con sal, ajo en polvo y pimienta. Cocínalo en sartén o airfryer hasta que no quede rosado por dentro (pollo/cerdo/molida: bien cocido, ~75 °C; res y pescado al punto que prefieras, pescado hasta que se desmenuce).';
+const RECIPES = {
+  'd-oats': ['En un frasco mezcla la avena con la leche y la whey hasta que no queden grumos.', 'Añade el banano en rodajas y el maní por encima.', 'Tapa y deja en la nevera mínimo 4 horas (ideal de un día para otro). Se come frío o tibio.'],
+  'd-yogur': ['Pon el yogur griego en un bowl.', 'Agrega la avena y el banano en rodajas.', 'Termina con el maní picado. Listo en 3 min, sin cocinar.'],
+  'd-duros': ['Cocina los huevos en agua hirviendo 10 min; pásalos a agua fría y pélalos.', 'Sirve con el pan integral y el banano.', 'Puedes dejar los huevos duros hechos en la nevera hasta 4 días.'],
+  'd-calentado': ['Calienta el arroz y los fríjoles ya cocidos en una sartén con un chorrito de agua.', 'Aparte, fríe o revuelve los huevos en poco aceite hasta que cuajen.', 'Sirve todo junto y añade el maní o cebolla picada si quieres.'],
+  'd-arepa': ['Cocina {P}, desmenúzalo y mézclalo con sal y un poco de cebolla.', 'Asa la arepa en sartén antioquia o tostadora hasta que dore.', 'Rellena con {P} desmechado y acompaña con el banano.'],
+  'd-revueltos': ['Bate los huevos con sal y pimienta.', 'Calienta el aceite a fuego medio y vierte los huevos; mueve suave hasta que cuajen.', 'Asa la arepa y sirve con el banano.'],
+  'd-tostadas': ['Tuesta el pan.', 'Cocina los huevos al gusto (fritos o revueltos) en poco aceite.', 'Pon el aguacate en láminas sobre el pan y los huevos encima, con sal y limón.'],
+  'a-bowl': ['Cocina o recalienta el arroz.', COOK_P, 'Saltea las verduras 4-5 min con el aceite, sal y ajo.', 'Arma el bowl: arroz, verduras y {P} encima.'],
+  'a-papa': [COOK_P, 'Cocina la papa en agua con sal 15-20 min hasta que se pinche fácil (o al horno a 200 °C unos 30 min).', 'Prepara una ensalada con las verduras, limón y sal. Sirve todo junto.'],
+  'a-platano': [COOK_P, 'Corta el plátano maduro en rodajas y dóralo en sartén antiadherente con una gota de aceite, 3 min por lado.', 'Acompaña con la ensalada de verduras y limón.'],
+  'a-pasta': ['Cuece la pasta en agua con sal según el paquete y escúrrela.', COOK_P + ' Córtalo en trozos.', 'Saltea las verduras con el aceite 4 min, une la pasta y {P} y mezcla a fuego bajo 1 min.'],
+  'a-corrientazo': ['Pide el corrientazo con {P} a la plancha o asado (evita el frito).', 'Pide arroz y fríjoles en porción normal y ensalada extra; la sopa y el jugo con azúcar déjalos fuera.', 'Compara con las cantidades de la comida: si el plato viene más grande, deja parte del arroz.'],
+  'a-higado': ['Corta el hígado en tiras y sazónalo con sal, pimienta y ajo; déjalo reposar 10 min.', 'Sofríe la cebolla en tiras con el aceite a fuego medio hasta que ablande.', 'Agrega el hígado y cocínalo 3-4 min por lado, bien cocido pero sin pasarlo (se endurece).', 'Sirve con el arroz y las verduras al vapor o salteadas.'],
+  'a-lentejas': ['Remoja las lentejas 30 min y cuécelas en agua nueva con sal 25-30 min hasta que estén tiernas (en olla a presión ~15 min).', COOK_P, 'Sirve las lentejas sobre el arroz con {P} y las verduras.'],
+  'a-lentejas-veg': ['Remoja las lentejas 30 min y cuécelas en agua nueva con sal 25-30 min (olla a presión ~15 min).', 'Sofríe cebolla y tomate con el aceite y mézclalo con las lentejas.', 'Sirve con arroz y las verduras.'],
+  'c-bowl': ['Recalienta el arroz.', COOK_P, 'Saltea las verduras con el aceite y sal 4-5 min.', 'Arma el bowl con arroz, verduras y {P}.'],
+  'c-papa': ['Corta la papa en cubos, mézclala con una gota de aceite y sal y hornéala a 200 °C 30 min (o hiérvela 15-20 min).', COOK_P, 'Sirve con la ensalada de verduras y limón.'],
+  'c-salteado': ['Corta {P} en tiras o cubos pequeños y las verduras en trozos finos.', 'Calienta el aceite a fuego alto y saltea {P} 4-5 min hasta que esté bien cocido.', 'Agrega las verduras 3 min más con sal, ajo y un chorrito de salsa de soya si quieres.', 'Sirve sobre el arroz recién calentado.'],
+  'c-tortilla': ['Bate los huevos con sal y pimienta.', 'Cocina la papa en cubos pequeños (hervida o en microondas) y saltea las verduras 3 min.', 'Vierte los huevos sobre la papa y las verduras en sartén con el aceite; tapa y cocina a fuego bajo 5-6 min hasta cuajar, voltea y 1 min más.'],
+  'c-atun': ['Escurre el atún y mézclalo con limón, sal y pimienta.', 'Calienta el arroz y arma la ensalada con las verduras.', 'Sirve el atún sobre el arroz con la ensalada.'],
+  'c-zuquini': ['Corta el zuquini en medias lunas y {P} en trozos pequeños.', 'Saltea {P} con el aceite a fuego alto hasta que esté bien cocido (hígado/corazón 4-5 min).', 'Agrega el zuquini 4 min más con sal y ajo; sirve con el arroz.'],
+  's-yogur': ['Pon el yogur griego en un bowl, agrega el banano en rodajas y el maní picado. Listo.'],
+  's-batido': ['Licúa la leche, el banano y la whey 30 segundos.', 'Añade el maní y licúa 10 segundos más. Tómalo frío.'],
+  's-huevos': ['Cocina los huevos en agua hirviendo 10 min, enfríalos y pélalos.', 'Cómelos con la fruta. Puedes dejarlos listos en la nevera hasta 4 días.'],
+  's-atun': ['Escurre el atún y mézclalo con limón y sal.', 'Asa la arepa y rellénala con el atún.'],
+  's-sandwich': [COOK_P, 'Desmenúzalo con un tenedor y mézclalo con sal y un poco de limón.', 'Tuesta el pan y arma el sándwich con {P} desmechado.'],
+};
 const SLOTS = { 3: [['desayuno', .27], ['almuerzo', .38], ['cena', .35]], 4: [['desayuno', .25], ['almuerzo', .33], ['snack', .12], ['cena', .30]], 5: [['desayuno', .22], ['snack', .12], ['almuerzo', .30], ['snack', .10], ['cena', .26]] };
 const OPT2FOODS = { pollo: ['muslo', 'pechuga'], molida: ['molida'], res: ['res'], cerdo: ['cerdo'], pescado: ['pescado'], atun: ['atun'], huevo: ['huevo'], visceras: ['higado', 'corazon'], legumbres: ['lenteja', 'frijol'] };
 
@@ -227,7 +258,7 @@ export function generateMenu(target, prefs = {}, seed = 0) {
       if (tpl.p.pool) { const p = poolFor(tpl); pf = p[(bi + seed * 2 + si) % p.length]; }
       const T = { p: target.p * fr, c: target.c * fr, f: target.f * fr };
       const { items, tot } = solve(tpl, pf, tpl.c, T, pool);
-      return { slot, id: tpl.id, name: (n => n.charAt(0).toUpperCase() + n.slice(1))(tpl.name.replace('{P}', FOODS[pf].s)), prep: tpl.prep, mins: tpl.mins, items: items.map(it => ({ id: it.id, g: it.g, text: label(it) })), k: Math.round(tot.k), p: Math.round(tot.p), c: Math.round(tot.c), f: Math.round(tot.f) };
+      return { slot, id: tpl.id, name: (n => n.charAt(0).toUpperCase() + n.slice(1))(tpl.name.replace('{P}', FOODS[pf].s)), prep: tpl.prep, mins: tpl.mins, steps: (RECIPES[tpl.id] || []).map(x => x.replace(/\{P\}/g, FOODS[pf].s)), items: items.map(it => ({ id: it.id, g: it.g, text: label(it) })), k: Math.round(tot.k), p: Math.round(tot.p), c: Math.round(tot.c), f: Math.round(tot.f) };
     }).filter(Boolean);
     days.push(dayMeals);
   }
