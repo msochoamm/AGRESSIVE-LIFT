@@ -9,7 +9,10 @@ const configured = !SUPABASE_URL.includes('TU-PROYECTO') && !SUPABASE_ANON_KEY.i
 
 // IA REAL sin login: Edge Function 'ai' en Supabase (la clave de OpenAI vive allí como secreto).
 // Con URL/anon key reales la IA se activa sola; sin configurar, la app usa sus respuestas locales.
-export const AI_ON = configured;
+const getKey = () => { try { return localStorage.getItem('al:aikey') || ''; } catch { return ''; } };
+export let AI_ON = configured || !!getKey();             // live binding: cambia al guardar/borrar la clave
+export const hasAiKey = () => !!getKey();
+export function setAiKey(k) { try { k ? localStorage.setItem('al:aikey', k) : localStorage.removeItem('al:aikey'); } catch {} AI_ON = configured || !!k; }
 export const LOCAL_MODE = !AUTH_ENABLED;
 export const AUTH_MISCONFIGURED = AUTH_ENABLED && !configured;
 export const CONFIG_OK = AUTH_ENABLED && configured;
@@ -52,7 +55,45 @@ export const saveBody = (uid, r) => enqueue('body_logs', uid, r);
 addEventListener('online', flush);
 
 /** IA vía Edge Function (requiere cuenta + licencia). En modo local lanza error y la app usa respuestas locales. */
+const BASE = `Eres el asistente experto de AGRESSIVE LIFT (hipertrofia y nutrición deportiva basadas en evidencia).
+Reglas: responde SIEMPRE en español, directo y específico a lo que el usuario acaba de pedir; nunca repitas una respuesta anterior ni uses plantillas genéricas.
+Si pide rutina: entrega días, división, ejercicios con series x reps x RIR, orden, descansos y progresión, respetando EXACTAMENTE los días/división que indique.
+Si pide dieta: entrega kcal y macros (proteína 1.6-2.2 g/kg, grasa >=0.7 g/kg, resto carbohidratos), comidas con cantidades en gramos y alternativas locales (Colombia: arroz, fríjoles, plátano, arepa, huevos, pollo, corrientazo).
+Si falta un dato imprescindible (peso, estatura, edad, nivel, equipo, lesiones, restricciones), pregunta UNA sola cosa concreta al final. Si no tienes el dato, no inventes cifras: dilo.
+Guía por objetivo (si el contexto trae goalGuide/planLock, respétalos):
+- Definición: déficit moderado (~0.5-1 % del peso/semana, ~300-500 kcal), proteína ~1.9-2.2 g/kg, fuerza pesada y constante (conserva carga), cardio LISS y pasos; fase típica 8-16 semanas; no recomiendes déficits de 800-1000+ kcal.
+- Volumen/hipertrofia: superávit pequeño (+5-10 %, ~+250-300 kcal), ganar ~0.25-0.5 % del peso/semana, proteína 1.6-2.2 g/kg, grasa 0.8-1.2 g/kg, 10-20 series duras por músculo/semana, frecuencia 2x/semana, RIR 1-3; ajusta calorías según el ritmo real cada 2-4 semanas.
+- Fuerza: 3-6 reps en básicos, descansos 3-5 min, mantenimiento o superávit leve.
+- No cambies ejercicios antes de 6-8 semanas. Si hay planLock activo, el plan no se modifica hasta planLock.until.
+Sé honesto con la incertidumbre y no des consejos médicos; ante dolor o lesión recomienda consultar a un profesional.`;
+/** Modo PRUEBAS: llamada directa a OpenAI con la clave guardada en este dispositivo (sin login ni Supabase). */
+async function direct(task, payload) {
+  const isMeal = task === 'meal';
+  const { systemPrompt = '', recentMessages = [], currentMessage, question, ...ctx } = payload;
+  const cur = String(isMeal ? payload.text ?? '' : (currentMessage ?? question ?? `Tarea automática "${payload.task ?? task}": redacta un consejo breve y concreto usando el contexto.`));
+  const system = isMeal
+    ? `${BASE}\nTarea: estima los macros de la comida descrita. Responde SOLO JSON: {"items":[{"name":str,"k":int,"p":int,"c":int,"f":int}],"confidence":0-1,"note":str}. Si faltan cantidades asume porciones típicas y baja la confianza.`
+    : `${BASE}\n${systemPrompt}\nContexto (JSON) de ${sessionStorage.getItem('al:profile') || 'juani'}: ${JSON.stringify(ctx).slice(0, 12000)}`;
+  let hist = isMeal ? [] : recentMessages.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: String(m.text ?? '') }));
+  while (hist.length && hist[hist.length - 1].role === 'assistant') hist.pop();               // respuesta local provisional
+  if (hist.length && hist[hist.length - 1].content === cur) hist.pop();                       // el mensaje actual se agrega aparte
+  const messages = [{ role: 'system', content: system }, ...hist.slice(-8), { role: 'user', content: cur }];
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 60000);
+  try {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', { method: 'POST', signal: ctl.signal,
+      headers: { Authorization: 'Bearer ' + getKey(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: localStorage.getItem('al:aimodel') || 'gpt-4o', messages, temperature: isMeal ? 0.2 : 0.7, max_completion_tokens: 1200,
+        ...(isMeal ? { response_format: { type: 'json_object' } } : {}) }) });
+    const j = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(res.status === 401 ? 'Clave de OpenAI inválida' : res.status === 429 ? 'Sin saldo o límite de OpenAI alcanzado' : j?.error?.message || 'Error de OpenAI (' + res.status + ')');
+    const text = String(j?.choices?.[0]?.message?.content ?? '').trim();
+    if (isMeal) { const o = JSON.parse(text); if (!Array.isArray(o.items) || !o.items.length) throw new Error('No pude estimar la comida'); return o; }
+    return { note: text };
+  } catch (e) { throw new Error(e.name === 'AbortError' ? 'La IA tardó demasiado' : e.message); } finally { clearTimeout(t); }
+}
+
 export async function ai(task, payload) {
+  if (getKey()) return direct(task, payload);
   if (LOCAL_MODE && AI_ON) {
     const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 45000);
     try {

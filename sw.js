@@ -1,5 +1,5 @@
-// SW v14: la app se pide SIEMPRE a la red primero (así ves las actualizaciones al instante) y usa la caché solo sin conexión.
-const C = 'al-v14', SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'engine.js', 'store.js', 'supabase.js', 'nutrition.js', 'manifest.json', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'icon-maskable.png', 'logo.png'];
+// SW v16: la app se pide SIEMPRE a la red primero (así ves las actualizaciones al instante) y usa la caché solo sin conexión.
+const C = 'al-v16', SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'engine.js', 'store.js', 'supabase.js', 'nutrition.js', 'manifest.json', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'icon-maskable.png', 'logo.png'];
 const EXT = ['esm.sh', 'raw.githubusercontent.com']; // librería e imágenes de ejercicios: caché primero
 self.addEventListener('install', e => e.waitUntil(caches.open(C).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())));
 self.addEventListener('activate', e => e.waitUntil(caches.keys().then(k => Promise.all(k.filter(x => x !== C).map(x => caches.delete(x)))).then(() => self.clients.claim())));
