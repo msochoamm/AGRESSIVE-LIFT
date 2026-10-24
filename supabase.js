@@ -12,7 +12,24 @@ const configured = !SUPABASE_URL.includes('TU-PROYECTO') && !SUPABASE_ANON_KEY.i
 const getKey = () => { try { return localStorage.getItem('al:aikey') || ''; } catch { return ''; } };
 export let AI_ON = configured || !!getKey();             // live binding: cambia al guardar/borrar la clave
 export const hasAiKey = () => !!getKey();
-export function setAiKey(k) { try { k ? localStorage.setItem('al:aikey', k) : localStorage.removeItem('al:aikey'); } catch {} AI_ON = configured || !!k; }
+export function setAiKey(k) { try { k ? localStorage.setItem('al:aikey', k) : localStorage.removeItem('al:aikey'); localStorage.removeItem('al:aimodel:auto'); localStorage.removeItem('al:aimodel:at'); } catch {} AI_ON = configured || !!k; }
+
+// Mejor modelo disponible: se consulta /v1/models con TU clave y se usa el primero de esta lista que tu cuenta tenga (el más capaz primero).
+// Se revisa al guardar la clave y cada 7 días. Para forzar uno: localStorage.setItem('al:aimodel', 'nombre-del-modelo').
+const MODEL_PREF = ['gpt-6.1-sol', 'gpt-6-sol', 'gpt-5.6-sol', 'gpt-5.5', 'gpt-5.4', 'gpt-5.2', 'gpt-5.1', 'gpt-5', 'gpt-4.1', 'gpt-4o'];
+const FALLBACK_MODEL = 'gpt-4.1';
+export const aiModel = () => { try { return localStorage.getItem('al:aimodel') || localStorage.getItem('al:aimodel:auto') || ''; } catch { return ''; } };
+export async function pickModel(force = false) {
+  const key = getKey(); if (!key) return '';
+  let cur = ''; try { cur = localStorage.getItem('al:aimodel:auto') || ''; if (!force && cur && Date.now() - (+localStorage.getItem('al:aimodel:at') || 0) < 6048e5) return cur; } catch {}
+  try {
+    const r = await timeout(fetch('https://api.openai.com/v1/models', { headers: { Authorization: 'Bearer ' + key } }), 10000);
+    if (!r.ok) return force ? '' : cur;
+    const ids = new Set(((await r.json()).data || []).map(m => m.id)), best = MODEL_PREF.find(m => ids.has(m)) || FALLBACK_MODEL;
+    try { localStorage.setItem('al:aimodel:auto', best); localStorage.setItem('al:aimodel:at', String(Date.now())); } catch {}
+    return best;
+  } catch { return force ? '' : cur; }
+}
 export const LOCAL_MODE = !AUTH_ENABLED;
 export const AUTH_MISCONFIGURED = AUTH_ENABLED && !configured;
 export const CONFIG_OK = AUTH_ENABLED && configured;
@@ -97,13 +114,22 @@ async function direct(task, payload) {
   while (hist.length && hist[hist.length - 1].role === 'assistant') hist.pop();               // respuesta local provisional
   if (hist.length && hist[hist.length - 1].content === cur) hist.pop();                       // el mensaje actual se agrega aparte
   const messages = [{ role: 'system', content: system }, ...hist.slice(-8), { role: 'user', content: cur }];
-  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 60000);
-  try {
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 90000), heavy = /training|nutrition|audit/.test(String(payload.task || task));
+  const run = async (model, plain) => { // modelos de razonamiento (gpt-5+/o*): sin temperature y el límite de tokens incluye el razonamiento
+    const reasoning = /^(gpt-[5-9]|o\d)/.test(model);
     const res = await fetch('https://api.openai.com/v1/chat/completions', { method: 'POST', signal: ctl.signal,
       headers: { Authorization: 'Bearer ' + getKey(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: localStorage.getItem('al:aimodel') || 'gpt-4o', messages, temperature: isMeal ? 0.2 : 0.7, max_completion_tokens: 1200,
+      body: JSON.stringify({ model, messages, max_completion_tokens: reasoning ? (isMeal ? 3000 : 8000) : 1500,
+        ...(plain ? {} : reasoning ? { reasoning_effort: heavy ? 'medium' : 'low' } : { temperature: isMeal ? 0.2 : 0.7 }),
         ...(isMeal ? { response_format: { type: 'json_object' } } : {}) }) });
-    const j = await res.json().catch(() => null);
+    return { res, j: await res.json().catch(() => null) };
+  };
+  try {
+    let model = localStorage.getItem('al:aimodel') || await pickModel() || FALLBACK_MODEL, out = await run(model, false);
+    if (!out.res.ok && /reasoning_effort|temperature|max_completion_tokens/i.test(out.j?.error?.message || '')) out = await run(model, true); // mismo modelo, sin parámetros opcionales
+    if (!out.res.ok && model !== FALLBACK_MODEL && [400, 403, 404].includes(out.res.status) && /model|access|exist/i.test(out.j?.error?.message || '')) { // el modelo ya no existe o no hay acceso
+      try { localStorage.removeItem('al:aimodel:auto'); localStorage.removeItem('al:aimodel:at'); } catch {} model = FALLBACK_MODEL; out = await run(model, false); }
+    const { res, j } = out;
     if (!res.ok) throw new Error(res.status === 401 ? 'Clave de OpenAI inválida' : res.status === 429 ? 'Sin saldo o límite de OpenAI alcanzado' : j?.error?.message || 'Error de OpenAI (' + res.status + ')');
     const text = String(j?.choices?.[0]?.message?.content ?? '').trim();
     if (isMeal) { const o = JSON.parse(text); if (!Array.isArray(o.items) || !o.items.length) throw new Error('No pude estimar la comida'); return o; }

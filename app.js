@@ -1,12 +1,12 @@
 // AGRESSIVE LIFT — SPA modular. Estado único (S) + render por plantillas + delegación de eventos.
-import { CONFIG_OK, AI_ON, hasAiKey, setAiKey, LOCAL_MODE, AUTH_MISCONFIGURED, sb, signIn, signUp, signOut, checkLicense, saveSet, saveBody, ai, flush } from './supabase.js';
+import { CONFIG_OK, AI_ON, hasAiKey, setAiKey, LOCAL_MODE, AUTH_MISCONFIGURED, sb, signIn, signUp, signOut, checkLicense, saveSet, saveBody, ai, flush, aiModel, pickModel } from './supabase.js';
 import { hydrate, store, profile, PROFILES } from './store.js';
 import * as E from './engine.js';
 import * as N from './nutrition.js';
 
 /* ---------- Utilidades y persistencia local ---------- */
 const $ = s => document.querySelector(s);
-const VERSION = 'v24';
+const VERSION = 'v25';
 const esc = t => String(t).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 await hydrate(); // IndexedDB → caché en memoria
 const today = () => new Date().toISOString().slice(0, 10);
@@ -198,6 +198,7 @@ const S = {
   nutritionSectionTab: 'chat',
   muscleSide: 'front',
   routineDate: today(),
+  manualRest: store.get('manualRest', {}), manualTrain: store.get('manualTrain', {}), customDay: store.get('customDay', {}),
   routineEdits: store.get('routineEdits', {}), dayMuscles: store.get('dayMuscles', {}), dayRest: store.get('dayRest', {}), ytkey: store.get('ytkey', ''), macroHist: store.get('macroHist', {}), toast: '', doneEx: store.get('doneEx', {}), drop: {}, restWhy: '', ytcache: store.get('ytcache', {}),
   routineModal: null,
   nutritionPreferences: store.get('nutritionPreferences', {}),
@@ -311,7 +312,7 @@ const header = () => `
 <div class="flex justify-between items-center pt-4">
   <div><div class="brand-title font-black neon"><img src="icon-180.png" alt="">AGRESSIVE LIFT</div>
   <div class="text-xs text-zinc-500">Mesociclo · semana ${mesoWeek()}/${S.meso.weeks} · rotación bloqueada · ${VERSION}</div>${xpLine()}</div>
-  ${LOCAL_MODE ? `<button class="btn ghost" data-act="aikey">🤖 IA<br><small>${AI_ON ? 'activa' : 'conectar'}</small></button><button class="btn ghost" data-act="switchuser">👤 ${esc(PROFILES[profile])}<br><small>Cambiar</small></button>` : '<button class="btn ghost" data-act="logout">Salir</button>'}
+  ${LOCAL_MODE ? `<button class="btn ghost" data-act="aikey">🤖 IA<br><small>${AI_ON ? esc(aiModel() || 'activa') : 'conectar'}</small></button><button class="btn ghost" data-act="switchuser">👤 ${esc(PROFILES[profile])}<br><small>Cambiar</small></button>` : '<button class="btn ghost" data-act="logout">Salir</button>'}
 </div>
 ${raveOn() ? `<div class="card on mt-3 text-sm">🔒 Modo Rave activo: PRs bloqueados ${Math.ceil((S.rave.prUntil - Date.now()) / 36e5)} h más. Entrena para técnica, no para récords.</div>` : ''}
 <div class="tabbar">${[['train', 'Entrenar'], ['food', 'Nutrición'], ['map', 'Músculos'], ['control', 'Control']]
@@ -436,7 +437,7 @@ const mondayOf = iso => {
   date.setUTCDate(date.getUTCDate() - ((date.getUTCDay() + 6) % 7));
   return isoDate(date);
 };
-function rawSessionIndex(iso, schedule) {
+function legacyRaw(iso, schedule) {
   const start = schedule.startDate || today();
   const elapsed = Math.floor((Date.parse(`${iso}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 864e5);
   if (elapsed < 0) return null;
@@ -453,12 +454,40 @@ function rawSessionIndex(iso, schedule) {
   const weeksElapsed = Math.floor((Date.parse(`${mondayOf(iso)}T00:00:00Z`) - Date.parse(`${mondayOf(start)}T00:00:00Z`)) / (7 * 864e5));
   return weeksElapsed * weekdays.length + sessionPosition;
 }
+/* v25: calendario SECUENCIAL. Las sesiones del plan (Push, Pull, Legs…) se reparten EN ORDEN sobre los días de entreno.
+   Un descanso marcado a mano NO consume sesión: la que te tocaba pasa al día siguiente libre (o al próximo día de entreno)
+   y todo lo que sigue se corre. En ciclos (ej. 3 entrenando + 1 descanso) el descanso marcado reinicia el ciclo.
+   Un "Entreno" extra en un día de descanso inserta una sesión y también corre lo demás. */
+function sessionTimeline(toIso, sch = S.trainingSchedule || DEFAULT_TRAINING_SCHEDULE) {
+  const out = {}, rest = S.manualRest || {}, extra = S.manualTrain || {};
+  const work = Number(sch.workDays) || sch.days || 3, len = Math.max(1, work + (Number(sch.restDays) || 0)), wds = sch.weekdays || DEFAULT_TRAINING_SCHEDULE.weekdays;
+  let seq = sch.offset || 0, pos = 0, carry = false;
+  for (let iso = sch.startDate || today(), g = 0; iso <= toIso && g < 800; iso = shiftIsoDate(iso, 1), g++) {
+    if (sch.cycle) {
+      const w = pos < work;
+      if (rest[iso]) { out[iso] = null; pos = w ? 0 : (pos + 1) % len; }
+      else if (w || extra[iso]) { out[iso] = seq++; pos = (pos + 1) % len; }
+      else { out[iso] = null; pos = (pos + 1) % len; }
+    } else {
+      const sched = wds.includes(new Date(`${iso}T00:00:00Z`).getUTCDay());
+      if (rest[iso]) { out[iso] = null; if (sched) carry = true; }
+      else if (sched || carry || extra[iso]) { out[iso] = seq++; carry = false; }
+      else out[iso] = null;
+    }
+  }
+  return out;
+}
 function routineSessionForDate(iso) {
-  const schedule = S.trainingSchedule || DEFAULT_TRAINING_SCHEDULE;
-  if (!S.trainingPlan.length) return null;
-  const raw = rawSessionIndex(iso, schedule); if (raw === null) return null;
-  const index = (raw + (schedule.offset || 0)) % S.trainingPlan.length;
-  return { ...S.trainingPlan[index], index };
+  const n = S.trainingPlan.length; if (!n) return null;
+  const seq = sessionTimeline(iso)[iso]; if (seq == null) return null;
+  const index = seq % n; return { ...S.trainingPlan[index], index };
+}
+/** Próximo día con sesión después de fromIso (para avisar "tu próximo entreno es…"). */
+function nextSession(fromIso, span = 60) {
+  const n = S.trainingPlan.length; if (!n) return null;
+  const t = sessionTimeline(shiftIsoDate(fromIso, span));
+  for (let i = 1; i <= span; i++) { const iso = shiftIsoDate(fromIso, i); if (t[iso] != null) { const index = t[iso] % n; return { iso, ses: { ...S.trainingPlan[index], index } }; } }
+  return null;
 }
 /* ---------- Organización por fechas: último entrenamiento + días de la semana ---------- */
 const NUMW = { un: 1, una: 1, uno: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5 };
@@ -513,11 +542,10 @@ function parseWeekdays(t, exclude = null) {
 const FOCUS_RX = { push: /push|torso/i, pull: /pull|torso/i, legs: /legs|pierna/i, torso: /torso/i, full: /completo/i };
 const FOCUS_TXT = { push: 'empuje (pecho/hombro/tríceps)', pull: 'tracción (espalda/bíceps)', legs: 'pierna', torso: 'torso', full: 'cuerpo completo' };
 const nextAfter = focus => { const i = S.trainingPlan.findIndex(d => FOCUS_RX[focus]?.test(d.day)); return i < 0 ? 0 : (i + 1) % S.trainingPlan.length; };
-function alignSchedule(sch, nextIdx) {
-  sch.offset = 0; const n = S.trainingPlan.length || 1;
-  for (let i = 0; i < 14; i++) { const iso = shiftIsoDate(sch.startDate, i), raw = rawSessionIndex(iso, sch);
-    if (raw !== null) { sch.offset = (((nextIdx - raw) % n) + n) % n; return iso; } }
-  return sch.startDate;
+function alignSchedule(sch, nextIdx) { // la primera sesión del calendario será la que sigue a tu último entrenamiento
+  const n = S.trainingPlan.length || 1; sch.offset = 0;
+  const first = Object.entries(sessionTimeline(shiftIsoDate(sch.startDate, 21), sch)).find(([, v]) => v !== null);
+  sch.offset = ((nextIdx % n) + n) % n; return first ? first[0] : sch.startDate;
 }
 const calPreview = () => { const D = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'], out = [];
   for (let i = 0; i < 14; i++) { const iso = shiftIsoDate(today(), i), ses = routineSessionForDate(iso), d = new Date(iso + 'T12:00:00');
@@ -687,6 +715,13 @@ const dayBuilder = () => {
   <div class="grid grid-cols-2 gap-2">${Object.keys(MUSCLES).map(k => { const w = recentWarn(k); return `<button class="chip ${sel.includes(k) ? 'on' : ''}" data-act="daymuscle" data-k="${k}">${MUSCLES[k].n}${w ? ` <span class="text-xs neon">⚠ hace ${w} d</span>` : ''}</button>`; }).join('')}</div>
   <button class="btn fill w-full mt-3" data-act="daygenerate">Generar rutina (${sel.length * 2} ejercicios)</button></div>`;
 };
+const fmtDay = iso => new Date(iso + 'T12:00:00').toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' });
+const planInfo = iso => {
+  if (!S.trainingConfigured || !S.trainingPlan.length) return '';
+  const ses = routineSessionForDate(iso), nx = nextSession(iso), nxt = nx ? `${esc(fmtDay(nx.iso))} — ${esc(nx.ses.day)}` : '';
+  return ses ? `<div class="text-xs text-zinc-400 mt-1">📌 Según tu plan este día te toca: <b class="text-white">${esc(ses.day)}</b>${nx ? ` · después: ${nxt}` : ''}</div>`
+    : `<div class="text-xs text-zinc-400 mt-1">😴 Sin sesión este día${nx ? ` · próximo entreno: <b class="text-white">${nxt}</b>` : ''}</div>`;
+};
 const routineDayPanel = () => {
   const iso = S.routineDate, exercises = routineExercisesForDate(iso), rest = !!S.dayRest[iso];
   const date = new Date(`${iso}T00:00:00Z`).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' });
@@ -694,6 +729,7 @@ const routineDayPanel = () => {
   return `<div class="card routine-day-panel">
     <div class="font-bold text-lg capitalize">${date}</div>
     <div class="text-sm neon">${rest ? '😴 Día de descanso' : exercises.length ? esc(muscles || 'Sesión personalizada') : 'Sin definir: elige Entreno o Descanso'}</div>
+    ${planInfo(iso)}
     <div class="grid grid-cols-2 gap-2 mt-3"><button class="chip ${rest ? '' : 'on'}" data-act="daytype" data-t="train">🏋️ Entreno</button><button class="chip ${rest ? 'on' : ''}" data-act="daytype" data-t="rest">😴 Descanso</button></div>
     ${rest ? '' : `${dayBuilder()}
     <div class="flex justify-between items-center mt-3"><span class="text-xs text-zinc-500">Ejercicios del día</span><button class="btn" data-act="addroutineexercise">＋ Añadir ejercicio</button></div>
@@ -1091,7 +1127,8 @@ const ACT = {
     const k = prompt(hasAiKey() ? 'Ya hay una clave guardada. Pega una nueva, o deja vacío y acepta para BORRARLA:' : 'Pega tu clave de OpenAI (empieza con sk-). Se guarda solo en este dispositivo:');
     if (k === null) return; const t = k.trim();
     if (t && !/^sk-/.test(t)) return alert('Esa clave no parece válida: debe empezar con sk-');
-    setAiKey(t); toast(t ? '🤖 IA conectada' : 'IA desconectada');
+    setAiKey(t); toast(t ? '🤖 Verificando la clave…' : 'IA desconectada');
+    if (t) pickModel(true).then(m => { toast(m ? `🤖 IA conectada · ${m}` : '⚠️ No pude verificar la clave: revisa saldo y permisos'); render(); }).catch(() => {});
   },
   switchuser() { sessionStorage.removeItem('al:profile'); sessionStorage.removeItem('alReload'); location.reload(); },
   startworkout() { // INICIAR desde la tarjeta de XP: abre la rutina de hoy
@@ -1131,7 +1168,7 @@ const ACT = {
   },
   removeroutineexercise(d) { if (planLockActive()) return lockedToast();
     const date = S.routineDate, exercises = [...routineExercisesForDate(date)];
-    exercises.splice(Number(d.index), 1);
+    exercises.splice(Number(d.index), 1); S.customDay[date] = true; store.set('customDay', S.customDay);
     S.routineEdits[date] = exercises;
     store.set('routineEdits', S.routineEdits);
   },
@@ -1139,7 +1176,7 @@ const ACT = {
     const name = ($('#routine-exercise')?.value || '').trim();
     if (!name) return;
     const { date, index } = S.modal, exercises = [...routineExercisesForDate(date)];
-    if (index < 0) exercises.push(name); else exercises[index] = name;
+    if (index < 0) exercises.push(name); else exercises[index] = name; S.customDay[date] = true; store.set('customDay', S.customDay);
     S.routineEdits[date] = exercises;
     store.set('routineEdits', S.routineEdits);
     S.modal = null;
@@ -1157,13 +1194,19 @@ const ACT = {
   ytclear() { S.ytkey = ''; S.ytcache = {}; store.set('ytkey', ''); store.set('ytcache', {}); if (S.modal) S.modal = { ...S.modal, yt: null, ytErr: '', ytLoading: false }; },
   ytnext() { const m = S.modal, i = (m.ytI + 1) % m.ytList.length; S.modal = { ...m, ytI: i, yt: m.ytList[i] }; },
   daymuscle(d) { if (planLockActive()) return lockedToast(); const a = S.dayMuscles[S.routineDate] || (S.dayMuscles[S.routineDate] = []), i = a.indexOf(d.k); i >= 0 ? a.splice(i, 1) : a.push(d.k); store.set('dayMuscles', S.dayMuscles); },
-  daytype(d) { if (d.t === 'rest') S.dayRest[S.routineDate] = true; else delete S.dayRest[S.routineDate]; store.set('dayRest', S.dayRest); },
+  daytype(d) { // descanso/entreno manual: la secuencia del plan se reacomoda sola (ver sessionTimeline)
+    const iso = S.routineDate, planned = S.trainingConfigured && S.trainingPlan.length;
+    if (d.t === 'rest') { S.dayRest[iso] = true; S.manualRest[iso] = true; delete S.manualTrain[iso]; delete S.customDay[iso]; }
+    else { delete S.dayRest[iso]; delete S.manualRest[iso]; if (planned && !routineSessionForDate(iso)) S.manualTrain[iso] = true; }
+    ['dayRest', 'manualRest', 'manualTrain', 'customDay'].forEach(k => store.set(k, S[k]));
+    if (planned) { applyPlanToCalendar(0); const nx = nextSession(iso); toast(d.t === 'rest' ? `😴 Descanso guardado${nx ? ` · próximo: ${fmtDay(nx.iso)} — ${nx.ses.day}` : ''}` : '🏋️ Día de entreno'); }
+  },
   daypreset(d) { if (planLockActive()) return lockedToast(); S.dayMuscles[S.routineDate] = [...PRESETS[d.p]]; store.set('dayMuscles', S.dayMuscles); },
   daygenerate() { if (planLockActive()) return lockedToast();
     const ks = S.dayMuscles[S.routineDate] || []; if (!ks.length) return alert('Elige al menos un músculo');
     delete S.dayRest[S.routineDate]; store.set('dayRest', S.dayRest);
     S.routineEdits[S.routineDate] = strategicOrder(ks).flatMap(k => CATALOG[k]); delete S.doneEx[S.routineDate]; store.set('doneEx', S.doneEx);
-    S.open = exByName(S.routineEdits[S.routineDate][0])?.id || null; store.set('routineEdits', S.routineEdits);
+    S.open = exByName(S.routineEdits[S.routineDate][0])?.id || null; store.set('routineEdits', S.routineEdits); S.customDay[S.routineDate] = true; store.set('customDay', S.customDay);
   },
   tab: d => { S.tab = d.t; S.open = null; }, toggle: d => S.open = S.open === d.id ? null : d.id,
   devil: d => { S.devil[d.id] = !S.devil[d.id]; if (!S.devil[d.id]) delete S.drop[d.id]; },
@@ -1430,13 +1473,13 @@ function musclesForSession(name) {
   return ['gluteos', 'pecho', 'espalda', 'hombros'];
 }
 /** Vuelca el plan al calendario (próximas 4 semanas): entrenos con ejercicios y descansos. No toca días ya registrados. */
-function applyPlanToCalendar() {
+function applyPlanToCalendar(from = -14) {
   const level = S.trainingPreferences.level, perMuscle = level === 'principiante' ? 1 : 2;
   const hasLogs = iso => Object.values(S.logs).some(l => l.some(x => x.d === iso));
-  for (let i = -14; i < (S.planLock?.weeks ? S.planLock.weeks * 7 : 28); i++) {
+  for (let i = from; i < (S.planLock?.weeks ? S.planLock.weeks * 7 : 28); i++) {
     const iso = shiftIsoDate(today(), i);
-    if (hasLogs(iso)) continue;
-    if (i < 0) { delete S.dayMuscles[iso]; delete S.routineEdits[iso]; delete S.dayRest[iso]; delete S.doneEx[iso]; continue; }
+    if (hasLogs(iso) || (i >= 0 && S.customDay[iso])) continue;
+    if (i < 0) { if (S.manualRest[iso]) continue; delete S.dayMuscles[iso]; delete S.routineEdits[iso]; delete S.dayRest[iso]; delete S.doneEx[iso]; continue; }
     const ses = routineSessionForDate(iso);
     if (ses) {
       const ks = ses.m || musclesForSession(ses.day);
@@ -1528,6 +1571,8 @@ async function sendCoachMessage(text) {
   let startNote = '';
   if (request && finalLw) {
     const sch = S.trainingSchedule; sch.startDate = finalLw.date === today() ? shiftIsoDate(today(), 1) : today();
+    for (const m of [S.manualRest, S.manualTrain]) for (const k of Object.keys(m)) if (k < sch.startDate) delete m[k];
+    S.customDay = {}; ['manualRest', 'manualTrain', 'customDay'].forEach(k => store.set(k, S[k]));
     const firstIso = alignSchedule(sch, finalLw.focus ? nextAfter(finalLw.focus) : 0), first = routineSessionForDate(firstIso);
     S.trainingPreferences.lastWorkout = { date: finalLw.date || '', focus: finalLw.focus || '', none: !!finalLw.none };
     const lwTxt = finalLw.none ? 'llevas un tiempo sin entrenar' : `${finalLw.date ? fmtLong(finalLw.date) + ' · ' : ''}${FOCUS_TXT[finalLw.focus] || 'entrenamiento'}`;
@@ -1643,6 +1688,23 @@ document.addEventListener('keydown', e => {
   render();
 });
 
+/* v25: migración única. Conserva lo que hoy muestra tu calendario y convierte los descansos que marcaste a mano
+   (días de descanso donde tu plan decía entrenar) en descansos "reales" que reacomodan la secuencia. */
+function migrateCalendar() {
+  if (store.get('calV25')) return; store.set('calV25', 1);
+  if (!S.trainingConfigured || !S.trainingPlan.length) return;
+  const sch = S.trainingSchedule, n = S.trainingPlan.length;
+  for (let i = 0; i < 21; i++) {
+    const iso = shiftIsoDate(today(), i), raw = legacyRaw(iso, sch); if (raw === null) continue;
+    const old = (raw + (sch.offset || 0)) % n, prev = sch.offset || 0; sch.offset = 0;
+    const s0 = sessionTimeline(iso, sch)[iso];
+    sch.offset = s0 == null ? prev : (((old - s0) % n) + n) % n; break;
+  }
+  for (const iso of Object.keys(S.dayRest)) if (iso >= today() && S.dayRest[iso] && routineSessionForDate(iso)) S.manualRest[iso] = true;
+  ['trainingSchedule', 'manualRest'].forEach(k => store.set(k, S[k]));
+  applyPlanToCalendar(0);
+}
+
 /* ---------- Arranque ---------- */
 if ('serviceWorker' in navigator) {
   const had = !!navigator.serviceWorker.controller; // solo recarga si ya había una versión anterior instalada
@@ -1654,6 +1716,8 @@ if (CONFIG_OK) {
   let lastCheck = Date.now(); // re-verifica la licencia al volver a la app (>5 min)
   document.addEventListener('visibilitychange', () => { if (!document.hidden && S.user && Date.now() - lastCheck > 3e5) { lastCheck = Date.now(); gate({ user: S.user }); } });
 } else { gate(); }
+try { migrateCalendar(); } catch (e) { console.error(e); }
+if (hasAiKey()) pickModel().then(() => render()).catch(() => {});
 maybeTitan();
 render();
 window.__ok = 1;
