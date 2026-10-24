@@ -11,7 +11,7 @@ const esc = t => String(t).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>'
 await hydrate(); // IndexedDB → caché en memoria
 const today = () => new Date().toISOString().slice(0, 10);
 const DEFAULT_TRAINING_SCHEDULE = { days: 3, split: 'PPL', cycle: false, workDays: 3, restDays: 4, startDate: today(), weekdays: [1, 3, 5] };
-const TRAINER_SYSTEM_PROMPT = 'Eres el entrenador de AGRESSIVE LIFT. Obedece el mensaje actual del usuario: nunca sustituyas una frecuencia o división explícita por una recomendación genérica de 3 días. Si indica días, descanso cíclico o estilo (PPL, torso/pierna o full body), confirma exactamente esos parámetros y entrega sesiones con ejercicios. Usa el calendario, esquema y plan actuales como contexto. No repitas literalmente tu respuesta anterior; responde en español y con acciones concretas.';
+const TRAINER_SYSTEM_PROMPT = 'Eres el entrenador de AGRESSIVE LIFT. Obedece el mensaje actual del usuario: nunca sustituyas una frecuencia o división explícita por una recomendación genérica de 3 días. Si indica días, descanso cíclico o estilo (PPL, torso/pierna o full body), confirma exactamente esos parámetros y entrega sesiones con ejercicios. Usa el calendario, esquema y plan actuales como contexto. Cuando crees un plan, di siempre: «Tu plan de entrenamiento será [división] por [N] semanas para que cumplas tu objetivo». Si planLock está activo, el plan es INAMOVIBLE hasta planLock.until: no cambies ni propongas cambiar días, división ni ejercicios; recuérdalo y ofrece solo ajustes de carga, técnica o recuperación. No repitas literalmente tu respuesta anterior; responde en español y con acciones concretas.';
 const nutritionHistory = store.get('nutritionChatHistory', []);
 const previousNutritionChat = store.get('nutritionChat', []);
 if (previousNutritionChat.some(message => message.role === 'user')) {
@@ -72,6 +72,30 @@ const ALL = Object.values(PROGRAM).flat();
 const MAP = { Core: 'core', Pecho: 'pecho', Hombro: 'hombros', 'Deltoide post.': 'hombros', 'Tríceps': 'triceps', Dorsal: 'espalda', Espalda: 'espalda',
   'Bíceps': 'biceps', 'Cuádriceps': 'cuads', Isquios: 'isquios', 'Glúteo': 'gluteos', Gemelo: 'gemelos' };
 const dAdd = n => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
+/* ---------- Plan bloqueado: la rutina no cambia hasta cumplir el objetivo ----------
+   Criterio: los ejercicios necesitan >=6 semanas para adaptarse y medir progreso; mesociclos de 4-8 semanas (principiante/intermedio 8, avanzado 6).
+   Lo que sí cambia cada sesión es la carga (el motor ajusta peso/reps). */
+const planLockActive = () => !!S.planLock && dAdd(0) <= S.planLock.until;
+const fmtLong = iso => new Date(iso + 'T12:00:00').toLocaleDateString('es-CO', { day: 'numeric', month: 'long' });
+/* Tipos de rutina por objetivo (resumen de la investigación: definición = mantener intensidad y proteína alta con déficit moderado;
+   volumen/hipertrofia = 10-20 series duras por músculo/semana, 2 frecuencia, superávit pequeño). */
+const GOALS = {
+  'hipertrofia': { weeks: 8, main: '4x6-10', sec: '3x8-12', acc: '3x10-15', rir: 'RIR 1-3', rest: '2-3 min en básicos y 60-90 s en aislados', cardio: '',
+    nutri: 'superávit pequeño de +5-10 % (≈ +250-300 kcal sobre mantenimiento), subir 0.25-0.5 % del peso por semana, proteína 1.6-2.2 g/kg y grasa 0.8-1.2 g/kg' },
+  'definición': { weeks: 10, main: '4x6-8', sec: '3x8-10', acc: '3x10-12', rir: 'RIR 1-2', rest: '2-3 min en básicos y 60-90 s en aislados', cardio: 'Cardio LISS 20-30 min (después de las pesas) · meta 8-10 mil pasos al día',
+    nutri: 'déficit moderado (≈ 300-500 kcal bajo mantenimiento; perder ~0.5-1 % del peso por semana, sin pasar de ahí), proteína alta (~1.9-2.2 g/kg), y mantén el peso en la barra: la carga pesada es la señal para conservar músculo' },
+  'fuerza': { weeks: 8, main: '5x3-5', sec: '3x6-8', acc: '3x8-10', rir: 'RIR 1-2', rest: '3-5 min en básicos', cardio: '',
+    nutri: 'mantenimiento o superávit leve (+100-250 kcal), proteína 1.6-2.2 g/kg' },
+};
+const goalKey = () => GOALS[S.trainingPreferences.goal] ? S.trainingPreferences.goal : 'hipertrofia';
+const makeLock = () => { const gk = goalKey(), g = GOALS[gk], sc = S.trainingSchedule || {};
+  S.trainingPreferences.goal = gk; store.set('trainingPreferences', S.trainingPreferences);
+  const weeks = S.trainingPreferences.level === 'avanzado' && gk !== 'definición' ? Math.min(g.weeks, 6) : g.weeks;
+  return { start: dAdd(0), until: dAdd(weeks * 7 - 1), weeks, days: sc.days || 3, split: sc.split || 'Push/Pull/Legs', goal: gk }; };
+const goalNote = gk => { const g = GOALS[gk]; return `🎯 Rutina de ${gk}: ejercicio principal ${g.main}, secundarios ${g.sec}, accesorios ${g.acc}, cerca del fallo (${g.rir}). Descansos: ${g.rest}.${g.cardio ? ' ' + g.cardio + '.' : ''}\n🍽️ Nutrición para ${gk}: ${g.nutri}.`; };
+const lockMsg = (fresh = false) => { const L = S.planLock, left = Math.max(1, Math.ceil((Date.parse(L.until + 'T12:00:00') - Date.now()) / 6048e5));
+  return `🔒 Tu plan de entrenamiento será ${L.split} · ${L.days} días por semana durante ${L.weeks} semanas (hasta el ${fmtLong(L.until)}) para que cumplas tu objetivo${L.goal ? ' de ' + L.goal : ''}. ${fresh ? '' : `Te quedan ${left} semana${left > 1 ? 's' : ''}. `}Durante ese tiempo la rutina y los ejercicios no cambian: hacen falta al menos 6 semanas con los mismos movimientos para adaptarte y medir progreso real. Lo que sí sube sesión a sesión es la carga y las repeticiones.`; };
+const lockedToast = () => toast(`🔒 Plan bloqueado hasta el ${fmtLong(S.planLock.until)}`);
 // Series de la última semana por grupo (para respetar el MRV en tiempo real).
 const weekDone = k => [...ALL, ...Object.values(CEX)].filter(e => MAP[e.m] === k).reduce((n, e) => n + (S.logs[e.id] || []).filter(x => (Date.now() - new Date(x.d)) / 864e5 < 7 && x.t !== 'w').length, 0);
 // Catálogo: SIEMPRE 2 ejercicios por músculo (principal + complementario).
@@ -123,6 +147,7 @@ const S = {
   trainingPlan: savedTrainingPlan,
   trainingSchedule: savedTrainingSchedule || DEFAULT_TRAINING_SCHEDULE,
   trainingConfigured: savedTrainingConfigured,
+  planLock: store.get('planLock', null),
   onboarded: store.get('onboarded', savedTrainingConfigured),
   trainingPreferences: store.get('trainingPreferences', {}),
   trainingSectionTab: 'routine',
@@ -883,18 +908,18 @@ const ACT = {
     const date = shiftIsoDate(S.routineDate, Number(d.d) || 0);
     ACT.routinedate({ date });
   },
-  addroutineexercise() { S.modal = { type: 'routineedit', date: S.routineDate, index: -1, value: '' }; },
-  editroutineexercise(d) {
+  addroutineexercise() { if (planLockActive()) return lockedToast(); S.modal = { type: 'routineedit', date: S.routineDate, index: -1, value: '' }; },
+  editroutineexercise(d) { if (planLockActive()) return lockedToast();
     const index = Number(d.index);
     S.modal = { type: 'routineedit', date: S.routineDate, index, value: routineExercisesForDate(S.routineDate)[index] || '' };
   },
-  removeroutineexercise(d) {
+  removeroutineexercise(d) { if (planLockActive()) return lockedToast();
     const date = S.routineDate, exercises = [...routineExercisesForDate(date)];
     exercises.splice(Number(d.index), 1);
     S.routineEdits[date] = exercises;
     store.set('routineEdits', S.routineEdits);
   },
-  saveRoutineExercise() {
+  saveRoutineExercise() { if (planLockActive()) return lockedToast();
     const name = ($('#routine-exercise')?.value || '').trim();
     if (!name) return;
     const { date, index } = S.modal, exercises = [...routineExercisesForDate(date)];
@@ -914,10 +939,10 @@ const ACT = {
   ytsave() { const k = ($('#ytkey')?.value || '').trim(); if (k.length < 20) return alert('Pega la clave completa'); S.ytkey = k; store.set('ytkey', k); if (S.modal?.type === 'exercisevideo') { S.modal = { ...S.modal, ytLoading: true, ytErr: '' }; loadYT(S.modal.name); } },
   ytclear() { S.ytkey = ''; S.ytcache = {}; store.set('ytkey', ''); store.set('ytcache', {}); if (S.modal) S.modal = { ...S.modal, yt: null, ytErr: '', ytLoading: false }; },
   ytnext() { const m = S.modal, i = (m.ytI + 1) % m.ytList.length; S.modal = { ...m, ytI: i, yt: m.ytList[i] }; },
-  daymuscle(d) { const a = S.dayMuscles[S.routineDate] || (S.dayMuscles[S.routineDate] = []), i = a.indexOf(d.k); i >= 0 ? a.splice(i, 1) : a.push(d.k); store.set('dayMuscles', S.dayMuscles); },
+  daymuscle(d) { if (planLockActive()) return lockedToast(); const a = S.dayMuscles[S.routineDate] || (S.dayMuscles[S.routineDate] = []), i = a.indexOf(d.k); i >= 0 ? a.splice(i, 1) : a.push(d.k); store.set('dayMuscles', S.dayMuscles); },
   daytype(d) { if (d.t === 'rest') S.dayRest[S.routineDate] = true; else delete S.dayRest[S.routineDate]; store.set('dayRest', S.dayRest); },
-  daypreset(d) { S.dayMuscles[S.routineDate] = [...PRESETS[d.p]]; store.set('dayMuscles', S.dayMuscles); },
-  daygenerate() {
+  daypreset(d) { if (planLockActive()) return lockedToast(); S.dayMuscles[S.routineDate] = [...PRESETS[d.p]]; store.set('dayMuscles', S.dayMuscles); },
+  daygenerate() { if (planLockActive()) return lockedToast();
     const ks = S.dayMuscles[S.routineDate] || []; if (!ks.length) return alert('Elige al menos un músculo');
     delete S.dayRest[S.routineDate]; store.set('dayRest', S.dayRest);
     S.routineEdits[S.routineDate] = strategicOrder(ks).flatMap(k => CATALOG[k]); delete S.doneEx[S.routineDate]; store.set('doneEx', S.doneEx);
@@ -1010,7 +1035,7 @@ const ACT = {
       try {
         const result = await ai('coach', { task: 'nutrition',
           systemPrompt: 'Eres el coach de nutrición de AGRESSIVE LIFT. Pregunta por hábitos, preferencias, restricciones, corrientazos y estilo de cocina. Adapta cada recomendación al mensaje actual, preferencias guardadas y macros restantes; evita respuestas genéricas repetidas. No inventes macros exactos sin cantidades.',
-          question: text, missing: N.missing(S.nutritionPreferences, !!S.target), target: nutritionTarget(), preferences: S.nutritionPreferences, conversation: S.nutritionChat.slice(-8),
+          question: text, goalGuide: S.trainingPreferences.goal && GOALS[S.trainingPreferences.goal] ? { goal: S.trainingPreferences.goal, nutri: GOALS[S.trainingPreferences.goal].nutri } : null, missing: N.missing(S.nutritionPreferences, !!S.target), target: nutritionTarget(), preferences: S.nutritionPreferences, conversation: S.nutritionChat.slice(-8),
           remaining: { kcal: remaining.kcal - S.macros.k, protein: remaining.p - S.macros.p,
             carbs: remaining.c - S.macros.c, fat: remaining.f - S.macros.f },
           style: STYLES[S.style][0], meals: S.meals.slice(-3).map(meal => meal.text) });
@@ -1119,7 +1144,7 @@ function parseTrainingRequest(text) {
     weekdays: days === 1 ? [1] : days === 2 ? [1, 4] : days === 3 ? [1, 3, 5]
       : days === 4 ? [1, 2, 4, 6] : days === 5 ? [1, 2, 3, 5, 6] : days === 6 ? [1, 2, 3, 4, 5, 6] : [0, 1, 2, 3, 4, 5, 6],
   };
-  const goal = /fuerza|potencia/.test(t) ? 'fuerza' : /hipertrof|masa|musculo/.test(t) ? 'hipertrofia' : /definicion|perder peso/.test(t) ? 'definición' : '';
+  const goal = /fuerza|potencia/.test(t) ? 'fuerza' : /definicion|\bcut\b|cutting|bajar grasa|perder grasa|quemar grasa|secar|perder peso|bajar de peso/.test(t) ? 'definición' : /hipertrof|masa|musculo|\bbulk|(?:fase|etapa|ciclo)\s+de\s+volumen|(?:hacer|hago|quiero|en)\s+volumen|subir de peso|aumentar peso/.test(t) ? 'hipertrofia' : '';
   const level = /principiante|novato/.test(t) ? 'principiante' : /intermedio/.test(t) ? 'intermedio' : /avanzado/.test(t) ? 'avanzado' : '';
   if (goal) S.trainingPreferences.goal = goal;
   if (level) S.trainingPreferences.level = level;
@@ -1149,8 +1174,11 @@ function buildTrainingPlan(text, request = parseTrainingRequest(text)) {
     { day: 'Cuerpo completo C', focus: 'Estímulo y técnica', blocks: ['Hip thrust 3x8-12', 'Press de pecho 3x8-12', 'Remo en polea 3x8-12', 'Curl femoral 2x10-15', 'Elevaciones laterales 2x12-15'] },
   ];
   const source = split === 'Torso/Pierna' ? upperLower : split === 'Full Body' ? fullBody : ppl;
+  const g = GOALS[goalKey()];
+  const tuned = s => ({ ...s, focus: `${s.focus} · ${g.rir}`,
+    blocks: [...s.blocks.map((b, i) => /core|gemelo|brazos/i.test(b) ? b : b.replace(/\d+x\d+(?:-\d+)?/, i === 0 ? g.main : i === 1 ? g.sec : g.acc)), ...(g.cardio ? [g.cardio] : [])] });
   return Array.from({ length: days }, (_, i) => ({
-    ...source[i % source.length],
+    ...tuned(source[i % source.length]),
     m: musclesForSession(source[i % source.length].day),
     day: `Día ${i + 1} · ${source[i % source.length].day}`,
   }));
@@ -1172,7 +1200,7 @@ function musclesForSession(name) {
 function applyPlanToCalendar() {
   const level = S.trainingPreferences.level, perMuscle = level === 'principiante' ? 1 : 2;
   const hasLogs = iso => Object.values(S.logs).some(l => l.some(x => x.d === iso));
-  for (let i = 0; i < 28; i++) {
+  for (let i = 0; i < (S.planLock?.weeks ? S.planLock.weeks * 7 : 28); i++) {
     const iso = shiftIsoDate(today(), i);
     if (hasLogs(iso)) continue;
     const ses = routineSessionForDate(iso);
@@ -1195,7 +1223,7 @@ function coachReply(text, request = parseTrainingRequest(text)) {
       : `${request.days} días por semana · ${request.split}`;
     const details = S.trainingPlan.map(day => `${day.day} (${day.focus}):\n• ${day.blocks.join('\n• ')}`).join('\n\n');
     const profile = [request.goal && `objetivo ${request.goal}`, request.level && `nivel ${request.level}`].filter(Boolean).join(' · ');
-    return `Entendido. Ya que entrenas con este esquema de ${cadence}${profile ? ` (${profile})` : ''}, reestructuro tu rutina de la siguiente manera:\n\n${details}\n\nActualicé tu plan y llené el calendario de las próximas 4 semanas con ejercicios por músculo${S.trainingPreferences.level === 'principiante' ? ' (1 ejercicio por músculo al empezar, para que construyas técnica)' : ''}.${S.trainingPreferences.injuries && S.trainingPreferences.injuries !== 'ninguna' ? ' Anoté tu molestia: si un ejercicio la agrava, usa Smart Swap para cambiarlo.' : ''}`;
+    return `Entendido. Ya que entrenas con este esquema de ${cadence}${profile ? ` (${profile})` : ''}, reestructuro tu rutina de la siguiente manera:\n\n${details}\n\nActualicé tu plan y llené el calendario con las semanas de tu plan con ejercicios por músculo${S.trainingPreferences.level === 'principiante' ? ' (1 ejercicio por músculo al empezar, para que construyas técnica)' : ''}.${S.trainingPreferences.injuries && S.trainingPreferences.injuries !== 'ninguna' ? ' Anoté tu molestia: si un ejercicio la agrava, usa Smart Swap para cambiarlo.' : ''}`;
   }
   if (!S.trainingConfigured) {
     const p = S.trainingPreferences;
@@ -1207,15 +1235,17 @@ function coachReply(text, request = parseTrainingRequest(text)) {
   if (/volumen|series|semana/.test(t)) return `Con tu esquema actual de ${schedule}, reparte las series entre las sesiones del plan y evita llevar todos los ejercicios al fallo. El detalle de cada día está en la pestaña Ejercicios.`;
   if (/recup|fatiga|descanso|sueño/.test(t)) return `Para tu esquema de ${schedule}, observa rendimiento, sueño y molestias entre sesiones. Si cae el rendimiento varios entrenamientos seguidos, reduce algunas series antes de añadir más días.`;
   if (/prior|hoy|ejercicio|pierna|legs|cuad|glute|pecho|push|hombro/.test(t)) return `Tu plan actual es ${schedule}. Revisa la sesión que corresponde en Ejercicios; prioriza el movimiento principal y conserva repeticiones en reserva si la técnica se degrada.`;
+  if (planLockActive()) return lockMsg();
   return `Tengo registrado tu esquema de ${schedule}. Dime cuántos días quieres entrenar o qué división prefieres (PPL o Torso/Pierna) y actualizaré el plan y el calendario con ese cambio.`;
 }
 
 async function sendCoachMessage(text) {
   const normalized = text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  const goal = /fuerza|potencia/.test(normalized) ? 'fuerza' : /hipertrof|masa|musculo/.test(normalized) ? 'hipertrofia' : /definicion|perder peso/.test(normalized) ? 'definición' : '';
+  const goal = /fuerza|potencia/.test(normalized) ? 'fuerza' : /definicion|\bcut\b|cutting|bajar grasa|perder grasa|quemar grasa|secar|perder peso|bajar de peso/.test(normalized) ? 'definición' : /hipertrof|masa|musculo|\bbulk|(?:fase|etapa|ciclo)\s+de\s+volumen|(?:hacer|hago|quiero|en)\s+volumen|subir de peso|aumentar peso/.test(normalized) ? 'hipertrofia' : '';
   const level = /principiante|novato/.test(normalized) ? 'principiante' : /intermedio/.test(normalized) ? 'intermedio' : /avanzado/.test(normalized) ? 'avanzado' : '';
-  if (goal) S.trainingPreferences.goal = goal;
-  if (level) S.trainingPreferences.level = level;
+  const locked = planLockActive(), prefsBefore = { goal: S.trainingPreferences.goal, level: S.trainingPreferences.level };
+  if (goal && !locked) S.trainingPreferences.goal = goal;
+  if (level && !locked) S.trainingPreferences.level = level;
   if (/lesion|dolor|molestia|operad|tendinitis|hernia/.test(normalized)) S.trainingPreferences.injuries = text.slice(0, 160);
   if (/\bsin lesion|ninguna lesion|no tengo lesion/.test(normalized)) S.trainingPreferences.injuries = 'ninguna';
   if (/\bcasa\b|en casa/.test(normalized)) S.trainingPreferences.place = 'casa';
@@ -1223,9 +1253,12 @@ async function sendCoachMessage(text) {
   const dur = /(\d{2,3})\s*(?:min|minutos)/.exec(normalized) || /(\d(?:[.,]\d)?)\s*horas?/.exec(normalized);
   if (dur) S.trainingPreferences.duration = dur[0];
   store.set('trainingPreferences', S.trainingPreferences);
-  const request = parseTrainingRequest(text);
+  let request = parseTrainingRequest(text);
+  const lockedAttempt = locked && !!request; // pidió cambiar el plan estando bloqueado
+  if (locked) { S.trainingPreferences.goal = prefsBefore.goal; S.trainingPreferences.level = prefsBefore.level; request = null; }
   const previousReply = [...S.coachChat].reverse().find(message => message.role === 'assistant')?.text;
-  let reply = coachReply(text, request);
+  let reply = lockedAttempt ? lockMsg() : coachReply(text, request);
+  if (request) { S.planLock = makeLock(); store.set('planLock', S.planLock); reply += '\n\n' + goalNote(S.planLock.goal) + '\n\n' + lockMsg(true); }
   if (reply === previousReply && !request) {
     reply = `Sigo con tu esquema de ${S.trainingSchedule.days} días · ${S.trainingSchedule.split}. Dime qué detalle quieres ajustar y cambio ese punto.`;
   }
@@ -1247,14 +1280,15 @@ async function sendCoachMessage(text) {
   S.aiTab = 'coach';
   store.set('aiTab', S.aiTab);
   render();
-  if (AI_ON || CONFIG_OK) {
+  if ((AI_ON || CONFIG_OK) && !lockedAttempt) {
     try {
       const result = await ai('coach', {
-        task: 'training', systemPrompt: TRAINER_SYSTEM_PROMPT, currentMessage: text,
+        task: 'training', planLock: planLockActive() ? S.planLock : null, goalGuide: { goal: goalKey(), ...GOALS[goalKey()] }, systemPrompt: TRAINER_SYSTEM_PROMPT, currentMessage: text,
         schedule: S.trainingSchedule, trainingPlan: S.trainingPlan, preferences: S.trainingPreferences,
         recentMessages: S.coachChat.slice(-8),
       });
-      const modelReply = String(result.note || '').trim();
+      let modelReply = String(result.note || '').trim();
+      if (modelReply && planLockActive() && request && !modelReply.includes('🔒')) modelReply += '\n\n' + lockMsg(true);
       if (modelReply && modelReply !== previousReply) {
         S.coachChat[S.coachChat.length - 1] = { role: 'assistant', text: modelReply };
         S.note = modelReply;
