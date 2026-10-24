@@ -184,6 +184,7 @@ const RECIPES = {
   's-atun': ['Escurre el atún y mézclalo con limón y sal.', 'Asa la arepa y rellénala con el atún.'],
   's-sandwich': [COOK_P, 'Desmenúzalo con un tenedor y mézclalo con sal y un poco de limón.', 'Tuesta el pan y arma el sándwich con {P} desmechado.'],
 };
+const TIMES = { 3: ['8:00', '13:00', '19:30'], 4: ['8:00', '13:00', '16:30', '19:30'], 5: ['7:30', '10:30', '13:00', '16:30', '19:30'] };
 const SLOTS = { 3: [['desayuno', .27], ['almuerzo', .38], ['cena', .35]], 4: [['desayuno', .25], ['almuerzo', .33], ['snack', .12], ['cena', .30]], 5: [['desayuno', .22], ['snack', .12], ['almuerzo', .30], ['snack', .10], ['cena', .26]] };
 const OPT2FOODS = { pollo: ['muslo', 'pechuga'], molida: ['molida'], res: ['res'], cerdo: ['cerdo'], pescado: ['pescado'], atun: ['atun'], huevo: ['huevo'], visceras: ['higado', 'corazon'], legumbres: ['lenteja', 'frijol'] };
 
@@ -258,7 +259,7 @@ export function generateMenu(target, prefs = {}, seed = 0) {
       if (tpl.p.pool) { const p = poolFor(tpl); pf = p[(bi + seed * 2 + si) % p.length]; }
       const T = { p: target.p * fr, c: target.c * fr, f: target.f * fr };
       const { items, tot } = solve(tpl, pf, tpl.c, T, pool);
-      return { slot, id: tpl.id, name: (n => n.charAt(0).toUpperCase() + n.slice(1))(tpl.name.replace('{P}', FOODS[pf].s)), prep: tpl.prep, mins: tpl.mins, steps: (RECIPES[tpl.id] || []).map(x => x.replace(/\{P\}/g, FOODS[pf].s)), items: items.map(it => ({ id: it.id, g: it.g, text: label(it) })), k: Math.round(tot.k), p: Math.round(tot.p), c: Math.round(tot.c), f: Math.round(tot.f) };
+      return { slot, time: (TIMES[slots.length] || [])[si] || '', id: tpl.id, name: (n => n.charAt(0).toUpperCase() + n.slice(1))(tpl.name.replace('{P}', FOODS[pf].s)), prep: tpl.prep, mins: tpl.mins, steps: (RECIPES[tpl.id] || []).map(x => x.replace(/\{P\}/g, FOODS[pf].s)), items: items.map(it => ({ id: it.id, g: it.g, text: label(it) })), k: Math.round(tot.k), p: Math.round(tot.p), c: Math.round(tot.c), f: Math.round(tot.f) };
     }).filter(Boolean);
     days.push(dayMeals);
   }
@@ -289,6 +290,8 @@ export function strategy({ target, prefs = {}, goal = 'maint', trainDays = 3 }) 
   const out = [], meals = +prefs.meals || 3, perMeal = Math.round(target.p / meals);
   out.push({ cut: `Definición: déficit moderado (≈20 %) con proteína alta (${target.p} g). Ritmo objetivo: perder ~0.5–0.7 % del peso por semana; si tu peso no se mueve 2 semanas, la auditoría ajusta hasta 250 kcal.`,
     maint: `Mantenimiento: ${target.kcal} kcal estables; usa el peso semanal solo para detectar derivas.`, bulk: `Volumen limpio (+10 %): sube ~0.25 % del peso por semana; si subes más rápido, es grasa y la auditoría recorta calorías.` }[goal]);
+  const hrs = (TIMES[meals] || TIMES[3]).map(h => { const [a, b] = h.split(':').map(Number); return `${((a + 11) % 12) + 1}:${String(b).padStart(2, '0')} ${a < 12 ? 'a. m.' : 'p. m.'}`; }).join(' · ');
+  out.push(`⏰ Horario sugerido (${meals} comidas): ${hrs} → deja 3-5 h entre comidas, con ~${perMeal} g de proteína en cada una; la comida previa al entreno 1.5-3 h antes y una con proteína + carbohidrato dentro de las 2 h después. ${{ cut: 'En definición, lleva algo más de proteína a la cena para controlar el hambre y haz la última comida ≥2 h antes de dormir.', maint: '', bulk: 'En volumen no te saltes comidas; si cuesta llegar a las calorías, suma un batido entre comidas.' }[goal] || ''}`);
   out.push(`Reparte ${target.p} g de proteína en ${meals} comidas (≈${perMeal} g cada una). Esa es la clave para conservar/ganar músculo.`);
   if (prefs.budget === 'economico') out.push('Presupuesto económico: tu base son huevo, muslo de pollo, hígado/corazón de res, lentejas, fríjoles, arroz y papa — las proteínas más baratas por gramo. Compra la carne en bandeja grande, porciónala y congela.');
   else if (prefs.budget === 'medio') out.push('Presupuesto medio: alterna pechuga, carne molida y pescado con huevo y legumbres para equilibrar costo y variedad.');
