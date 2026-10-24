@@ -18,14 +18,26 @@ export function setAiKey(k) { try { k ? localStorage.setItem('al:aikey', k) : lo
 // Se revisa al guardar la clave y cada 7 días. Para forzar uno: localStorage.setItem('al:aimodel', 'nombre-del-modelo').
 const MODEL_PREF = ['gpt-6.1-sol', 'gpt-6-sol', 'gpt-5.6-sol', 'gpt-5.5', 'gpt-5.4', 'gpt-5.2', 'gpt-5.1', 'gpt-5', 'gpt-4.1', 'gpt-4o'];
 const FALLBACK_MODEL = 'gpt-4.1';
+/* Proveedores (todos hablan el formato OpenAI /chat/completions). La clave decide cuál se usa:
+   AIza… → Google Gemini (GRATIS, sin tarjeta, endpoint compatible con OpenAI) · sk-… → OpenAI (de pago). */
+const GEMINI_PREF = ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3-flash-preview', 'gemini-2.5-flash'];
+const PROVIDERS = {
+  gemini: { name: 'Gemini', base: 'https://generativelanguage.googleapis.com/v1beta/openai', pref: GEMINI_PREF, fallback: 'gemini-3.8-flash' },
+  openai: { name: 'OpenAI', base: 'https://api.openai.com/v1', pref: MODEL_PREF, fallback: FALLBACK_MODEL },
+};
+export const providerOf = (k = getKey()) => (/^AIza/.test(k) ? 'gemini' : 'openai');
+export const aiProvider = () => PROVIDERS[providerOf()].name;
+export const validKey = k => /^AIza[\w-]{30,}$/.test(k) || /^sk-[\w-]{20,}$/.test(k);
 export const aiModel = () => { try { return localStorage.getItem('al:aimodel') || localStorage.getItem('al:aimodel:auto') || ''; } catch { return ''; } };
 export async function pickModel(force = false) {
   const key = getKey(); if (!key) return '';
   let cur = ''; try { cur = localStorage.getItem('al:aimodel:auto') || ''; if (!force && cur && Date.now() - (+localStorage.getItem('al:aimodel:at') || 0) < 6048e5) return cur; } catch {}
   try {
-    const r = await timeout(fetch('https://api.openai.com/v1/models', { headers: { Authorization: 'Bearer ' + key } }), 10000);
+    const P = PROVIDERS[providerOf(key)], r = await timeout(fetch(P.base + '/models', { headers: { Authorization: 'Bearer ' + key } }), 12000);
     if (!r.ok) return force ? '' : cur;
-    const ids = new Set(((await r.json()).data || []).map(m => m.id)), best = MODEL_PREF.find(m => ids.has(m)) || FALLBACK_MODEL;
+    const ids = new Set(((await r.json()).data || []).map(m => String(m.id).replace(/^models\//, '')));
+    const any = P === PROVIDERS.gemini ? [...ids].filter(i => /^gemini-[\d.]+-flash$/.test(i)).sort().reverse()[0] : '';
+    const best = P.pref.find(m => ids.has(m)) || any || P.fallback;
     try { localStorage.setItem('al:aimodel:auto', best); localStorage.setItem('al:aimodel:at', String(Date.now())); } catch {}
     return best;
   } catch { return force ? '' : cur; }
@@ -144,32 +156,36 @@ async function direct(task, payload) {
   const cur = String(isMeal ? payload.text ?? '' : (currentMessage ?? question ?? `Tarea automática "${payload.task ?? task}": redacta un consejo breve y concreto usando el contexto.`));
   const system = isMeal
     ? `${BASE}\nTarea: estima los macros de la comida descrita. Responde SOLO JSON: {"items":[{"name":str,"k":int,"p":int,"c":int,"f":int}],"confidence":0-1,"note":str}. Si faltan cantidades asume porciones típicas y baja la confianza.`
-    : `${BASE}\n${systemPrompt}\n${schemaFor(String(payload.task ?? task))}\nContexto (JSON) de ${sessionStorage.getItem('al:profile') || 'juani'}: ${JSON.stringify(ctx).slice(0, 16000)}`;
+    : `${BASE}\n${systemPrompt}\n${schemaFor(String(payload.task ?? task))}\nContexto (JSON) de ${sessionStorage.getItem('al:profile') || 'juani'}: ${JSON.stringify(ctx).slice(0, 14000)}`;
   let hist = isMeal ? [] : recentMessages.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: String(m.text ?? '') }));
   while (hist.length && hist[hist.length - 1].role === 'assistant') hist.pop();               // respuesta local provisional
   if (hist.length && hist[hist.length - 1].content === cur) hist.pop();                       // el mensaje actual se agrega aparte
   const messages = [{ role: 'system', content: system }, ...hist.slice(-8), { role: 'user', content: cur }];
   const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 90000), heavy = /training|nutrition|audit/.test(String(payload.task || task));
-  const run = async (model, plain) => { // modelos de razonamiento (gpt-5+/o*): sin temperature y el límite de tokens incluye el razonamiento
-    const reasoning = /^(gpt-[5-9]|o\d)/.test(model);
-    const res = await fetch('https://api.openai.com/v1/chat/completions', { method: 'POST', signal: ctl.signal,
+  const gem = providerOf() === 'gemini', P = PROVIDERS[providerOf()], sleep = ms => new Promise(r => setTimeout(r, ms));
+  const run = async (model, plain, retried = false) => { // OpenAI gpt-5+/o*: sin temperature y el límite incluye el razonamiento · Gemini 3: el "pensamiento" también gasta tokens → límite alto + esfuerzo bajo
+    const reasoning = gem || /^(gpt-[5-9]|o\d)/.test(model);
+    const res = await fetch(P.base + '/chat/completions', { method: 'POST', signal: ctl.signal,
       headers: { Authorization: 'Bearer ' + getKey(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, messages, max_completion_tokens: reasoning ? (isMeal ? 3000 : 8000) : (isMeal ? 1500 : 4000),
-        ...(plain ? {} : reasoning ? { reasoning_effort: heavy ? 'medium' : 'low' } : { temperature: isMeal ? 0.2 : 0.7 }),
-        response_format: { type: 'json_object' } }) });
+      body: JSON.stringify({ model, messages, [gem ? 'max_tokens' : 'max_completion_tokens']: reasoning ? (isMeal ? 3000 : 8000) : (isMeal ? 1500 : 4000),
+        ...(plain ? {} : reasoning ? { reasoning_effort: gem || !heavy ? 'low' : 'medium' } : { temperature: isMeal ? 0.2 : 0.7 }),
+        ...(plain && gem ? {} : { response_format: { type: 'json_object' } }) }) });
+    if (res.status === 429 && gem && !retried) { // cupo gratis por minuto: espera y reintenta una vez
+      await sleep(Math.min(20000, (parseInt(res.headers.get('retry-after')) || 8) * 1000)); return run(model, plain, true); }
     return { res, j: await res.json().catch(() => null) };
   };
   try {
-    let model = localStorage.getItem('al:aimodel') || await pickModel() || FALLBACK_MODEL, out = await run(model, false);
-    if (!out.res.ok && /reasoning_effort|temperature|max_completion_tokens/i.test(out.j?.error?.message || '')) out = await run(model, true); // mismo modelo, sin parámetros opcionales
-    if (!out.res.ok && model !== FALLBACK_MODEL && [400, 403, 404].includes(out.res.status) && /model|access|exist/i.test(out.j?.error?.message || '')) { // el modelo ya no existe o no hay acceso
-      try { localStorage.removeItem('al:aimodel:auto'); localStorage.removeItem('al:aimodel:at'); } catch {} model = FALLBACK_MODEL; out = await run(model, false); }
+    let model = localStorage.getItem('al:aimodel') || await pickModel() || P.fallback, out = await run(model, false);
+    if (!out.res.ok && out.res.status === 400 && (gem || /reasoning_effort|temperature|max_completion_tokens/i.test(out.j?.error?.message || ''))) out = await run(model, true); // mismo modelo, sin parámetros opcionales
+    if (!out.res.ok && model !== P.fallback && [400, 403, 404].includes(out.res.status) && /model|access|exist|not found/i.test(JSON.stringify(out.j?.error || out.j || ''))) { // el modelo ya no existe o no hay acceso
+      try { localStorage.removeItem('al:aimodel:auto'); localStorage.removeItem('al:aimodel:at'); } catch {} model = P.fallback; out = await run(model, false); }
     const { res, j } = out;
-    if (!res.ok) throw new Error(res.status === 401 ? 'Clave de OpenAI inválida' : res.status === 429 ? 'Sin saldo o límite de OpenAI alcanzado' : j?.error?.message || 'Error de OpenAI (' + res.status + ')');
+    const emsg = (Array.isArray(j) ? j[0] : j)?.error?.message || '';
+    if (!res.ok) throw new Error(res.status === 401 || /api key|invalid.*key|permission/i.test(emsg) && res.status !== 429 ? `Clave de ${P.name} inválida` : res.status === 429 ? (gem ? 'Llegaste al límite gratis de Gemini por ahora: espera un minuto y reintenta (el cupo diario se renueva solo)' : 'Sin saldo o límite de OpenAI alcanzado') : emsg || `Error de ${P.name} (${res.status})`);
     const text = String(j?.choices?.[0]?.message?.content ?? '').trim();
-    if (isMeal) { const o = JSON.parse(text); if (!Array.isArray(o.items) || !o.items.length) throw new Error('No pude estimar la comida'); return o; }
+    if (isMeal) { let o; try { o = JSON.parse(text); } catch { o = JSON.parse((text.match(/\{[\s\S]*\}/) || [''])[0] || '{}'); } if (!Array.isArray(o.items) || !o.items.length) throw new Error('No pude estimar la comida'); return o; }
     return parseReply(text);
-  } catch (e) { throw new Error(e.name === 'AbortError' ? 'La IA tardó demasiado' : e.message); } finally { clearTimeout(t); }
+  } catch (e) { throw new Error(e.name === 'AbortError' ? 'La IA tardó demasiado' : e instanceof TypeError ? `No pude conectar con ${P.name}: revisa tu internet` : e.message); } finally { clearTimeout(t); }
 }
 
 export async function ai(task, payload) {

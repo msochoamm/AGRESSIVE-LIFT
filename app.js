@@ -1,15 +1,17 @@
 // AGRESSIVE LIFT — SPA modular. Estado único (S) + render por plantillas + delegación de eventos.
-import { CONFIG_OK, AI_ON, hasAiKey, setAiKey, LOCAL_MODE, AUTH_MISCONFIGURED, sb, signIn, signUp, signOut, checkLicense, saveSet, saveBody, ai, flush, aiModel, pickModel } from './supabase.js';
+import { CONFIG_OK, AI_ON, hasAiKey, setAiKey, LOCAL_MODE, AUTH_MISCONFIGURED, sb, signIn, signUp, signOut, checkLicense, saveSet, saveBody, ai, flush, aiModel, pickModel, aiProvider, validKey } from './supabase.js';
 import { hydrate, store, profile, PROFILES } from './store.js';
 import * as E from './engine.js';
 import * as N from './nutrition.js';
+import { buildMonthPdf } from './pdf.js';
 
 /* ---------- Utilidades y persistencia local ---------- */
 const $ = s => document.querySelector(s);
-const VERSION = 'v26';
+const VERSION = 'v27';
 const esc = t => String(t).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 await hydrate(); // IndexedDB → caché en memoria
-const today = () => new Date().toISOString().slice(0, 10);
+const localIso = t => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+const today = () => localIso(Date.now());
 const DEFAULT_TRAINING_SCHEDULE = { days: 3, split: 'PPL', cycle: false, workDays: 3, restDays: 4, startDate: today(), weekdays: [1, 3, 5] };
 const TRAINER_SYSTEM_PROMPT = 'Eres el entrenador real de AGRESSIVE LIFT: hablas como una persona, cercano y directo, en español y sin listas numeradas. Obedece el mensaje actual: nunca sustituyas una frecuencia o división explícita por una genérica de 3 días. Haz la entrevista de forma conversacional (UNA pregunta por turno, sin repetir lo que ya respondió: revisa preferences, lastWorkout y el historial) y, cuando tengas lo imprescindible, genera el plan en ese mismo turno con command update_routine. Si planLock está activo el plan es INAMOVIBLE hasta planLock.until: no uses update_routine y ofrece solo ajustes de carga, técnica o recuperación. No repitas literalmente tu respuesta anterior.';
 const nutritionHistory = store.get('nutritionChatHistory', []);
@@ -98,7 +100,7 @@ const GLOSSARY = {
 const ACR_KEYS = Object.keys(GLOSSARY).sort((x, y) => y.length - x.length).map(k => k.replace('-', '\\-'));
 let ACR_RX; try { ACR_RX = new RegExp('(?<![A-Za-zÁÉÍÓÚÑ0-9-])(' + ACR_KEYS.join('|') + ')(?![A-Za-zÁÉÍÓÚÑ0-9-])', 'g'); } catch { ACR_RX = new RegExp('\\b(' + ACR_KEYS.join('|') + ')\\b', 'g'); }
 const rich = t => esc(t).replace(ACR_RX, k => `<button class="acr" data-act="acr" data-k="${k}">${k}</button>`);
-const dAdd = n => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
+const dAdd = n => { const d = new Date(); d.setDate(d.getDate() + n); return localIso(d); };
 /* ---------- Plan bloqueado: la rutina no cambia hasta cumplir el objetivo ----------
    Criterio: los ejercicios necesitan >=6 semanas para adaptarse y medir progreso; mesociclos de 4-8 semanas (principiante/intermedio 8, avanzado 6).
    Lo que sí cambia cada sesión es la carga (el motor ajusta peso/reps). */
@@ -205,7 +207,7 @@ const S = {
   nutritionChat: freshNutritionChat,
   nutritionHistory: store.get('nutritionChatHistory', []),
   nutritionBusy: false,
-  menuDay: (new Date().getDay() + 6) % 7, menuSeed: store.get('menuSeed', 0),
+  menuDay: (new Date().getDay() + 6) % 7, menuSeed: store.get('menuSeed', 0), menuWeek: 0, menuWeekSeen: store.get('menuWeekSeen', ''), pdfMonth: store.get('pdfMonth', ''), badgesSeen: store.get('badgesSeen', null),
 };
 if (!S.trainingPlan.length) {
   S.trainingPlan = [
@@ -315,8 +317,8 @@ const header = () => `
   ${LOCAL_MODE ? `<button class="btn ghost" data-act="aikey">🤖 IA<br><small>${AI_ON ? esc(aiModel() || 'activa') : 'conectar'}</small></button><button class="btn ghost" data-act="switchuser">👤 ${esc(PROFILES[profile])}<br><small>Cambiar</small></button>` : '<button class="btn ghost" data-act="logout">Salir</button>'}
 </div>
 ${raveOn() ? `<div class="card on mt-3 text-sm">🔒 Modo Rave activo: PRs bloqueados ${Math.ceil((S.rave.prUntil - Date.now()) / 36e5)} h más. Entrena para técnica, no para récords.</div>` : ''}
-<div class="tabbar">${[['train', 'Entrenar'], ['food', 'Nutrición'], ['map', 'Músculos'], ['control', 'Control']]
-  .map(([k, l]) => `<button class="chip flex-1 ${S.view === k ? 'on' : ''}" data-act="view" data-v="${k}">${l}</button>`).join('')}</div>
+<div class="tabbar">${[['train', '🏋️', 'Entrenar'], ['food', '🍽️', 'Nutrición'], ['map', '🧬', 'Músculos'], ['control', '📊', 'Control']]
+  .map(([k, i, l]) => `<button class="chip flex-1 tabbtn ${S.view === k ? 'on' : ''}" data-act="view" data-v="${k}"><span class="ti">${i}</span><span>${l}</span></button>`).join('')}</div>
 </div>`;
 
 const todaySets = id => (S.logs[id] || []).filter(s => s.d === today());
@@ -372,7 +374,7 @@ const deloadCard = () => {
 // Agua y creatina: un solo mapa {fecha: {ml, cr}} en IndexedDB (por perfil, se reinicia solo cada día).
 const WATER_ML = 4000;
 const hyd = () => S.hydra[today()] || { ml: 0, cr: false };
-const setHyd = h => { S.hydra[today()] = h; S.hydra = Object.fromEntries(Object.entries(S.hydra).sort(([x], [y]) => x.localeCompare(y)).slice(-60)); store.set('hydra', S.hydra); };
+const setHyd = h => { S.hydra[today()] = h; S.hydra = Object.fromEntries(Object.entries(S.hydra).sort(([x], [y]) => x.localeCompare(y)).slice(-400)); store.set('hydra', S.hydra); };
 const hydraCard = () => { const h = hyd();
   return `<div class="card"><div class="flex justify-between items-center"><div class="font-bold">💧 Agua · <span class="${h.ml >= WATER_ML ? 'neon' : ''}">${+(h.ml / 1000).toFixed(2)} / ${WATER_ML / 1000} L</span></div><button class="chip !px-3" data-act="water" data-n="-250" aria-label="Quitar 250 ml">−250</button></div>
   <div class="xpbar big mt-2"><i style="width:${Math.min(100, h.ml / WATER_ML * 100)}%;background:linear-gradient(90deg,#38bdf8,#bae6fd);box-shadow:0 0 8px #38bdf8"></i></div>
@@ -640,18 +642,54 @@ const nutritionCoachCard = () => {
 <button class="btn fill w-full" data-act="nutriplan" ${ok ? '' : 'disabled'}>${ok ? 'Ver mi plan nutricional →' : `Faltan ${miss.length} dato${miss.length > 1 ? 's' : ''} para abrir tu plan`}</button>`;
 };
 /* ---------- Plan: estrategia + menú semanal + compras ---------- */
-const currentMenu = () => N.generateMenu(nutritionTarget(), S.nutritionPreferences, S.menuSeed);
+/* El menú cambia SOLO cada semana: la semilla sale del número de semana (+ "Otra variante" del usuario). */
+const weekNo = iso => Math.floor(Date.parse(iso + 'T00:00:00Z') / 864e5 / 7);
+const weekSeed = mon => weekNo(mon) + (+mon.slice(0, 4) * 12 + +mon.slice(5, 7)) * 3 + (S.menuSeed || 0); // semana a semana + otro orden cada mes
+const menuMonday = off => shiftIsoDate(mondayOf(today()), 7 * off);
+const currentMenu = (off = 0) => N.generateMenu(nutritionTarget(), S.nutritionPreferences, weekSeed(menuMonday(off)));
+const shortDate = iso => new Date(iso + 'T12:00:00').toLocaleDateString('es-CO', { day: 'numeric', month: 'short' }).replace('.', '');
+const weekBanner = () => { const k = mondayOf(today()); if (!S.menuWeekSeen) { S.menuWeekSeen = k; store.set('menuWeekSeen', k); return ''; }
+  return S.menuWeekSeen === k ? '' : `<div class="card on banner"><div class="font-bold">🔄 ¡Nueva semana, nuevo menú!</div><div class="text-sm text-zinc-400 mt-1">Cambié recetas y proteínas de esta semana (siempre con tus macros) y actualicé la lista de compras y la cocina del domingo.</div><button class="btn fill w-full mt-2" data-act="weekseen">Entendido</button></div>`; };
+const MONTHS = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+const pdfCard = () => { if (!S.target || !N.ready(S.nutritionPreferences, true)) return ''; const done = S.pdfMonth === today().slice(0, 7), mes = MONTHS[+today().slice(5, 7) - 1];
+  return `<div class="card ${done ? '' : 'on'} pdfcard"><div class="flex justify-between items-center gap-2"><div class="min-w-0"><div class="font-bold">📄 Plan de ${mes} en PDF</div><div class="text-xs text-zinc-400 mt-1">${done ? 'Ya lo descargaste este mes. El del próximo mes aparece aquí solo.' : '4 semanas de recetas, horarios, entrenos y lista de compras por semana.'}</div></div><button class="btn ${done ? 'ghost' : 'fill'} !px-3" data-act="pdfmonth">${done ? 'Otra vez' : 'Descargar'}</button></div></div>`; };
+const PREPTXT = { nevera: m => `Nevera · ${m} min`, cocinar: m => `Cocinar · ${m} min`, rapido: m => `Rápido · ${m} min`, fuera: () => 'Restaurante' };
+/** Datos del PDF mensual: 4 semanas con menú, horarios, entrenos, compras y cocina. */
+function monthData() {
+  const t = nutritionTarget(), prefs = S.nutritionPreferences, mon0 = shiftIsoDate(mondayOf(today()), [0, 6].includes(new Date().getDay()) ? 7 : 0), sch = S.trainingSchedule, hasPlan = !!S.trainingPlan?.length;
+  const DN = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+  const weeks = [0, 1, 2, 3].map(w => {
+    const mon = shiftIsoDate(mon0, 7 * w), menu = N.generateMenu(t, prefs, weekSeed(mon)), seen = new Set(); let trainN = 0;
+    const days = menu.days.map((ms, i) => {
+      const iso = shiftIsoDate(mon, i), ses = hasPlan ? routineSessionForDate(iso) : null; if (ses) trainN++;
+      const meals = ms.map(m => { const first = !seen.has(m.id); seen.add(m.id);
+        return { slot: m.slot, time: m.time ? fmtHour(m.time) : '', name: m.name, items: m.items.map(it => it.text).join(' · '), k: m.k, p: m.p, c: m.c, f: m.f, where: (PREPTXT[m.prep] || (() => ''))(m.mins), steps: first ? (m.steps || []) : [] }; });
+      return { name: DN[i], date: shortDate(iso), train: ses ? `Entreno: ${ses.day}` : hasPlan ? 'Descanso' : '', meals, tot: meals.reduce((a, m) => ({ k: a.k + m.k, p: a.p + m.p, c: a.c + m.c, f: a.f + m.f }), { k: 0, p: 0, c: 0, f: 0 }) };
+    });
+    return { label: `${shortDate(mon)} - ${shortDate(shiftIsoDate(mon, 6))}`, summary: `Meta diaria: ${t.kcal} kcal · P ${t.p} g · C ${t.c} g · G ${t.f} g${hasPlan ? ` · ${trainN} entrenos esta semana` : ''}. ${menu.notes.join(' ')}`,
+      groceries: N.groceries(menu), cook: N.cookPlan(menu, prefs), days };
+  });
+  const end = shiftIsoDate(mon0, 27);
+  return { name: PROFILES[profile] || 'Atleta', range: `${shortDate(mon0)} - ${shortDate(end)} ${end.slice(0, 4)}`, generated: `${shortDate(today())} ${today().slice(0, 4)}`, target: t,
+    strategy: N.strategy({ target: t, prefs, goal: S.profile?.goal || 'maint', trainDays: sch?.days || 3 }), notes: [],
+    training: hasPlan && sch ? `${sch.split || 'Rutina'} · ${sch.cycle ? `${sch.workDays} días entrenando y ${sch.restDays} de descanso` : `${sch.days} días por semana`}${S.trainingPreferences.goal ? ' · objetivo: ' + S.trainingPreferences.goal : ''}. Cada día del PDF indica qué te toca; si mueves un descanso en la app, el calendario se reacomoda solo.` : '', weeks };
+}
+function downloadPdf(bytes, name) {
+  const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' })), a = document.createElement('a');
+  a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 6e4);
+}
 const fmtHour = t => { const [h, mi] = t.split(':').map(Number); return `${((h + 11) % 12) + 1}:${String(mi).padStart(2, '0')} ${h < 12 ? 'a. m.' : 'p. m.'}`; };
 const PREP = { nevera: m => `🧊 Nevera · ${m} min`, cocinar: m => `🍳 ${m} min`, rapido: m => `⚡ ${m} min`, fuera: () => '🍽️ Restaurante' };
 const planCards = () => {
-  const prefs = S.nutritionPreferences, t = nutritionTarget(), menu = currentMenu(), day = Math.min(S.menuDay, 6), meals = menu.days[day] || [];
+  const wk = S.menuWeek || 0, prefs = S.nutritionPreferences, t = nutritionTarget(), menu = currentMenu(wk), day = Math.min(S.menuDay, 6), meals = menu.days[day] || [];
   const DN = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'], tot = meals.reduce((a, m) => ({ k: a.k + m.k, p: a.p + m.p, c: a.c + m.c, f: a.f + m.f }), { k: 0, p: 0, c: 0, f: 0 });
   const strat = N.strategy({ target: t, prefs, goal: S.profile?.goal || 'maint', trainDays: S.trainingSchedule?.days || 3 }), groc = N.groceries(menu);
   const cookHtml = N.cookPlan(menu, prefs).map(b => `<div class="mt-2"><div class="neon text-sm font-bold">${esc(b.day)} · ${esc(b.title)}</div><ul class="strat">${b.tasks.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>`).join('');
   const GL = { prot: 'Proteínas', supp: 'Suplementos', dairy: 'Lácteos', carb: 'Carbohidratos', veg: 'Verduras', fat: 'Grasas' };
   return `<div class="card on"><div class="font-bold text-lg">🎯 Tu estrategia</div><div class="text-xs text-zinc-500 mb-1">Hecha con tus respuestas · ${t.kcal} kcal · P ${t.p} · C ${t.c} · G ${t.f}</div>
     <ul class="strat">${strat.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>
-  <div class="card"><div class="flex justify-between items-center gap-2"><div class="font-bold text-lg">🍽️ Menú de la semana</div><button class="chip !px-3" data-act="menuregen">🔄 Otra variante</button></div>
+  ${weekBanner()}${pdfCard()}<div class="card"><div class="flex justify-between items-center gap-2"><div class="font-bold text-lg">🍽️ Menú de la semana</div><button class="chip !px-3" data-act="menuregen">🔄 Otra variante</button></div>
+    <div class="weeknav"><button class="icon-btn" data-act="menuweek" data-n="-1" ${wk <= 0 ? 'disabled' : ''}>‹</button><div class="text-center"><b>${wk === 0 ? 'Esta semana' : wk === 1 ? 'Próxima semana' : `En ${wk} semanas`}</b><div class="text-xs text-zinc-500">${shortDate(menuMonday(wk))} - ${shortDate(shiftIsoDate(menuMonday(wk), 6))} · cambia solo cada lunes</div></div><button class="icon-btn" data-act="menuweek" data-n="1" ${wk >= 3 ? 'disabled' : ''}>›</button></div>
     <div class="daytabs">${DN.map((d, i) => `<button class="chip ${day === i ? 'on' : ''}" data-act="menuday" data-i="${i}">${d}</button>`).join('')}</div>
     ${meals.map((m, i) => `<div class="meal"><div class="flex justify-between items-start gap-2"><div class="min-w-0"><div class="text-xs neon uppercase">${m.slot}${m.time ? ` · 🕗 ${fmtHour(m.time)}` : ''}</div><div class="font-bold leading-tight">${esc(m.name)}</div></div><span class="mealtag">${(PREP[m.prep] || PREP.cocinar)(m.mins)}</span></div>
       <div class="text-sm text-zinc-400 mt-1">${m.items.map(it => esc(it.text)).join(' · ')}</div>
@@ -992,6 +1030,7 @@ function xpBreakdown() {
     weigh: S.weights.length * 15,
     done: Object.values(S.doneEx).reduce((n, o) => n + Object.keys(o).length, 0) * 10,
     rest: Object.keys(S.dayRest).filter(d => d <= today()).length * 10,
+    badges: badgeState().tiers * 25,
   };
 }
 const totalXp = () => Object.values(xpBreakdown()).reduce((a, b) => a + b, 0);
@@ -1004,7 +1043,71 @@ function syncHist() { // guarda el resumen de comida de cada día (para el contr
   if (!o || JSON.stringify(o) !== JSON.stringify(h)) { S.macroHist[S.macros.d] = h; store.set('macroHist', S.macroHist); }
 }
 const toast = m => { S.toast = m; clearTimeout(toast.t); toast.t = setTimeout(() => { S.toast = ''; render(); }, 2600); };
-const xpToast = b => { const a = totalXp(); if (a <= b) return; const lb = levelOf(b), la = levelOf(a); toast(la > lb ? `🔥 ¡NIVEL ${la}! ${rankOf(la)} · +${a - b} XP` : `+${a - b} XP`); };
+const xpToast = b => { const a = totalXp(), bm = checkBadges(true); if (a <= b) return bm && toast(bm); const lb = levelOf(b), la = levelOf(a);
+  toast((la > lb ? `🔥 ¡NIVEL ${la}! ${rankOf(la)} · +${a - b} XP` : `+${a - b} XP`) + (bm ? ' · ' + bm : '')); };
+/* ---------- Logros y misiones: todo se calcula desde tus registros (nada se pierde) ---------- */
+const TIERS = ['Bronce', 'Plata', 'Oro', 'Platino', 'Diamante'];
+const BADGE_GROUPS = [
+  { id: 'sess', ic: '🏋️', n: 'Constancia', d: 'Días entrenados', th: [1, 10, 30, 75, 150], v: c => c.trainDays },
+  { id: 'sets', ic: '💪', n: 'Volumen', d: 'Series efectivas', th: [50, 300, 1000, 3000, 8000], v: c => c.sets },
+  { id: 'ton', ic: '🏗️', n: 'Toneladas', d: 'Toneladas levantadas', th: [5, 25, 100, 300, 800], v: c => c.ton },
+  { id: 'pr', ic: '🏆', n: 'Récords', d: 'PRs conseguidos', th: [1, 5, 15, 40, 100], v: c => c.prs },
+  { id: 'streak', ic: '🔥', n: 'Racha', d: 'Mejor racha en días', th: [3, 7, 14, 30, 60], v: c => c.best },
+  { id: 'meals', ic: '🍽️', n: 'Disciplina', d: 'Comidas registradas', th: [10, 50, 150, 400, 1000], v: c => c.meals },
+  { id: 'macro', ic: '🎯', n: 'En la meta', d: 'Días dentro de tu meta', th: [3, 10, 30, 60, 120], v: c => c.onTarget },
+  { id: 'water', ic: '💧', n: 'Hidratado', d: 'Días con 4 L de agua', th: [3, 10, 30, 60, 120], v: c => c.water },
+  { id: 'weigh', ic: '⚖️', n: 'Control', d: 'Pesajes', th: [2, 8, 20, 50, 100], v: c => c.weigh },
+  { id: 'perfect', ic: '⭐', n: 'Semana perfecta', d: 'Semanas con todas las misiones', th: [1, 3, 8, 16, 32], v: c => c.perfect },
+];
+function missionsFor(mon, c) {
+  const days = Array.from({ length: 7 }, (_, i) => shiftIsoDate(mon, i)), tl = S.trainingPlan?.length ? sessionTimeline(days[6]) : {};
+  const planned = days.filter(d => tl[d] != null).length, td = today();
+  return [
+    { ic: '🏋️', n: 'Entrena tus sesiones', v: days.filter(d => c.setsBy[d] > 0).length, t: Math.max(1, planned) },
+    { ic: '🎯', n: 'Días dentro de tu meta de kcal', v: days.filter(d => d <= td && c.inTarget(d)).length, t: 5 },
+    { ic: '💧', n: 'Días con 4 L de agua', v: days.filter(d => (S.hydra[d]?.ml || 0) >= WATER_ML).length, t: 5 },
+    { ic: '⚖️', n: 'Pesajes', v: S.weights.filter(w => w.d >= days[0] && w.d <= days[6]).length, t: 2 },
+  ];
+}
+const BC = { sig: '', c: null, st: null };
+function badgeCtx() {
+  const rows = allRows(), hist = Object.entries(S.macroHist), td = today();
+  const sig = [rows.length, hist.length, hist.reduce((a, [, h]) => a + (h.n || 0) * 1000 + Math.round(h.k || 0), 0), S.weights.length, Object.keys(S.dayRest).length, Object.values(S.hydra).reduce((a, h) => a + h.ml, 0), td].join('|');
+  if (BC.sig === sig && BC.c) return BC.c;
+  const setsBy = {}; let sets = 0, kg = 0, prs = 0;
+  for (const x of rows) { setsBy[x.d] = (setsBy[x.d] || 0) + 1; if (x.t !== 'w') { sets++; kg += x.w * x.r; } if (x.pr) prs++; }
+  const inTarget = d => { const h = S.macroHist[d], b = histBudget(d); return !!(h && h.n > 0 && b && h.k >= .9 * b && h.k <= 1.1 * b); };
+  const act = [...new Set([...Object.keys(setsBy), ...Object.keys(S.dayRest).filter(d => d <= td), ...hist.filter(([, h]) => h.n > 0).map(([d]) => d)])].sort();
+  let best = 0, run = 0; act.forEach((d, i) => { run = i && Math.round((Date.parse(d) - Date.parse(act[i - 1])) / 864e5) === 1 ? run + 1 : 1; best = Math.max(best, run); });
+  const c = { setsBy, sets, ton: Math.round(kg / 1000), prs, trainDays: Object.keys(setsBy).length, best, meals: hist.reduce((n, [, h]) => n + (h.n || 0), 0), inTarget,
+    onTarget: hist.filter(([d]) => d < td && inTarget(d)).length, water: Object.values(S.hydra).filter(h => h.ml >= WATER_ML).length, weigh: S.weights.length, perfect: 0 };
+  const first = [...Object.keys(setsBy), ...S.weights.map(w => w.d)].sort()[0];
+  if (first) for (let m = mondayOf(first), g = 0; m <= mondayOf(td) && g < 80; m = shiftIsoDate(m, 7), g++) if (missionsFor(m, c).every(x => x.v >= x.t)) c.perfect++;
+  BC.sig = sig; BC.c = c; BC.st = null; return c;
+}
+function badgeState() {
+  const c = badgeCtx(); if (BC.st) return BC.st;
+  const groups = BADGE_GROUPS.map(g => { const val = g.v(c), tier = g.th.filter(t => val >= t).length, prev = g.th[tier - 1] || 0, next = g.th[tier] ?? null;
+    return { ...g, val, tier, next, pct: next == null ? 100 : Math.max(0, Math.round((val - prev) / (next - prev) * 100)) }; });
+  return (BC.st = { groups, tiers: groups.reduce((a, g) => a + g.tier, 0), max: BADGE_GROUPS.length * 5 });
+}
+function checkBadges(announce) {
+  const cur = badgeState().groups.flatMap(g => TIERS.slice(0, g.tier).map((_, i) => `${g.id}:${i + 1}`));
+  if (!S.badgesSeen) { S.badgesSeen = cur; store.set('badgesSeen', cur); return ''; }
+  const fresh = cur.filter(k => !S.badgesSeen.includes(k)); if (!fresh.length) return '';
+  S.badgesSeen = cur; store.set('badgesSeen', cur); if (!announce) return '';
+  const [id, t] = fresh.at(-1).split(':'), g = BADGE_GROUPS.find(x => x.id === id); navigator.vibrate?.([80, 40, 80, 40, 160]);
+  return `🏅 Logro: ${g.n} ${TIERS[t - 1]}${fresh.length > 1 ? ` (+${fresh.length - 1})` : ''}`;
+}
+const missionsCard = () => { const ms = missionsFor(mondayOf(today()), badgeCtx()), done = ms.filter(m => m.v >= m.t).length;
+  return `<div class="card"><div class="flex justify-between items-center"><div class="font-bold">🎯 Misiones de la semana</div><span class="mealtag">${done}/${ms.length}</span></div>
+  ${ms.map(m => `<div class="mission ${m.v >= m.t ? 'ok' : ''}"><div class="flex justify-between text-sm gap-2"><span>${m.ic} ${m.n}</span><b>${Math.min(m.v, m.t)}/${m.t}${m.v >= m.t ? ' ✓' : ''}</b></div><div class="xpbar"><i style="width:${Math.min(100, m.v / m.t * 100)}%"></i></div></div>`).join('')}
+  ${done === ms.length ? '<div class="text-xs neon mt-2">⭐ ¡Semana perfecta! Cuenta para tu logro «Semana perfecta».</div>' : '<div class="text-xs text-zinc-500 mt-2">Cumple las 4 y consigue una semana perfecta.</div>'}</div>`; };
+const badgesCard = () => { const st = badgeState();
+  return `<div class="card"><div class="flex justify-between items-center"><div class="font-bold">🏅 Logros</div><span class="mealtag">${st.tiers}/${st.max} · +25 XP c/u</span></div>
+  <div class="badges">${st.groups.map(g => `<div class="badge t${g.tier}"><div class="bic">${g.ic}</div><div class="bn">${g.n}</div><div class="bt">${g.tier ? TIERS[g.tier - 1] : 'Bloqueado'}</div><div class="xpbar"><i style="width:${g.pct}%"></i></div><small>${g.next != null ? `${g.val} / ${g.next}` : '¡MÁX!'}</small></div>`).join('')}</div>
+  <div class="text-xs text-zinc-500 mt-2">Cada logro sube de Bronce a Diamante. ${esc(st.groups.find(g => g.next != null)?.d || '')}: toca seguir sumando.</div></div>`; };
+const rankIx = L => RANKS.filter(r => L >= r[0]).length - 1;
 const xpLine = () => { const x = totalXp(), L = levelOf(x), a = lvlStart(L), nx = lvlStart(L + 1), st = streak();
   return `<div class="xpline" data-act="view" data-v="control"><b class="neon">Nv ${L}</b><span>${rankOf(L)}</span><div class="xpbar"><i style="width:${Math.round((x - a) / (nx - a) * 100)}%"></i></div><small>${x - a}/${nx - a} XP</small>${st ? `<span>🔥${st}</span>` : ''}</div>`; };
 
@@ -1019,14 +1122,18 @@ const controlView = () => {
   const state = S.dayRest[today()] ? '😴 Descanso' : setsOn(today()) ? `🏋️ ${setsOn(today())} series hechas` : (S.routineEdits[today()] || []).length ? '📋 Entreno planeado' : 'Sin definir';
   const ids = Object.keys(S.logs).filter(id => S.logs[id].length).sort((p, q) => S.logs[q].at(-1).d.localeCompare(S.logs[p].at(-1).d)).slice(0, 12);
   return `
-<div class="card on"><div class="flex justify-between items-center"><div><div class="text-xs text-zinc-500">Nivel ${L}</div><div class="text-2xl font-black neon">${rankOf(L)}</div></div>
-  <div class="text-center"><div class="text-2xl font-black">${st} 🔥</div><div class="text-xs text-zinc-500">días de racha</div></div></div>
-  <div class="xpbar big mt-2"><i style="width:${Math.round((x - a) / (nx - a) * 100)}%"></i></div>
-  <div class="text-xs text-zinc-500 mt-1">${x - a} / ${nx - a} XP para el nivel ${L + 1} · total ${x} XP</div>
+<div class="card on hero rk${rankIx(L)}"><div class="hero-row"><div class="ring" style="--p:${Math.round((x - a) / (nx - a) * 100)}"><div><b>${L}</b><small>NIVEL</small></div></div>
+  <div class="hero-info"><div class="text-xs text-zinc-500 uppercase tracking">Rango</div><div class="rank-name">${rankOf(L)}</div>
+    <div class="xpbar big mt-2"><i style="width:${Math.round((x - a) / (nx - a) * 100)}%"></i></div>
+    <div class="text-xs text-zinc-400 mt-1">${x - a} / ${nx - a} XP para el nivel ${L + 1}${RANKS.find(r => r[0] > L) ? ` · ${RANKS.find(r => r[0] > L)[1]} en nivel ${RANKS.find(r => r[0] > L)[0]}` : ' · rango máximo'}</div></div></div>
+  <div class="stat3"><div><b>${st}🔥</b><span>racha</span></div><div><b>${badgeState().tiers}</b><span>logros</span></div><div><b>${prs}</b><span>PRs (7 d)</span></div><div><b>${x}</b><span>XP total</span></div></div>
   <button class="btn fill w-full mt-3" data-act="startworkout">🔥 INICIAR ENTRENAMIENTO</button>
-  <div class="text-xs text-zinc-400 mt-2">XP por: series ${br.sets} · días entrenados ${br.train} · comida ${br.meals + br.target} · ejercicios terminados ${br.done} · peso ${br.weigh} · descansos ${br.rest}</div>
+  <div class="text-xs text-zinc-400 mt-2">XP por: series ${br.sets} · días entrenados ${br.train} · comida ${br.meals + br.target} · ejercicios terminados ${br.done} · peso ${br.weigh} · descansos ${br.rest} · logros ${br.badges}</div>
   <details class="mt-2 text-sm text-zinc-400"><summary>Cómo gano XP</summary>Serie +10 (+3 si RIR 0-1, +5 drop set; calentamiento +3) · ejercicio terminado +10 · PR +50 · día entrenado +40 · comida registrada +5 · día dentro de tu meta +25 · pesaje +15 · descanso marcado +10. Rangos: Novato, Agresivo (nv 5), Bestia (10), Titán (15), Élite (25), Leyenda (40).</details></div>
 ${goalBar()}
+${missionsCard()}
+${badgesCard()}
+${pdfCard()}
 <div class="card"><div class="font-bold">Hoy · ${state}</div>
   ${S.target ? `<div class="text-sm text-zinc-400 mt-1">${m.k} / ${b} kcal · P ${m.p} · C ${m.c} · G ${m.f}</div><div class="h-2 bg-zinc-900 mt-2 rounded"><div class="h-2 rounded" style="width:${Math.min(100, b ? m.k / b * 100 : 0)}%;background:#ff2b57"></div></div>` : '<div class="text-sm text-zinc-500 mt-1">Configura tu perfil en Nutrición para ver tus calorías.</div>'}</div>
 ${hydraCard()}
@@ -1046,6 +1153,27 @@ const sheet = () => {
   if (m.type === 'acr') { const g = GLOSSARY[m.k];
     return `<div class="sheet"><div><div class="text-xs text-zinc-500 uppercase tracking">Significado</div><div class="font-bold text-lg neon">${esc(m.k)} · ${esc(g.n)}</div><div class="text-sm mt-2">${esc(g.d)}</div>${g.p ? `<div class="text-sm mt-2">🎯 Te conviene si ${esc(g.p)}</div>` : ''}${g.a ? `<div class="text-sm text-zinc-400 mt-2">📲 En tu plan: ${esc(g.a)}</div>` : ''}<button class="btn ghost w-full mt-3" data-act="closemodal">Cerrar</button></div></div>`; }
   if (m.type === 'titan') return titanSheet();
+  if (m.type === 'aisetup') return `<div class="sheet"><div style="max-height:92vh;overflow:auto">
+    <div class="text-xs text-zinc-500 uppercase tracking">Paso importante</div>
+    <div class="font-bold text-xl neon">🤖 Conecta tu IA</div>
+    <div class="text-sm text-zinc-300 mt-2">Con una clave de IA tu entrenador y tu nutricionista arman rutinas y dietas a tu medida, recuerdan lo que les cuentas y ajustan el plan contigo. Sin clave la app funciona, pero con respuestas más básicas.</div>
+    <div class="card on !p-2 mt-3 text-sm">✅ <b>No necesitas pagar.</b> Google Gemini tiene plan <b>gratis, sin tarjeta</b>, y es la opción recomendada. OpenAI (<b>sk-…</b>) también sirve, pero es de pago.</div>
+    <details class="aihow mt-3" open><summary>🆓 Gratis: Google Gemini (recomendado)</summary>
+      <ol class="strat" style="list-style:decimal;padding-left:20px">
+        <li>Abre <a class="neon" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> e inicia sesión con tu cuenta de Google.</li>
+        <li>Toca <b>Create API key</b> (si te pide un proyecto, elige <b>Create API key in new project</b>).</li>
+        <li><b>Copia la clave</b>: empieza con <b>AIza</b>. No pide tarjeta ni saldo.</li>
+        <li>Pégala abajo y toca <b>Conectar</b>.</li></ol>
+      <div class="text-xs text-zinc-500">El plan gratis tiene un tope de consultas por minuto y por día (suficiente para tu uso normal; si lo alcanzas, la app espera y reintenta). En el plan gratis Google puede usar lo que escribas para mejorar sus productos: no pongas datos que no quieras compartir.</div></details>
+    <details class="aihow mt-2"><summary>💳 De pago: OpenAI (sk-…)</summary>
+      <ol class="strat" style="list-style:decimal;padding-left:20px">
+        <li>Entra a <a class="neon" href="https://platform.openai.com/signup" target="_blank" rel="noopener">platform.openai.com</a> y crea tu cuenta.</li>
+        <li>OpenAI ya no regala créditos: en <b>Settings → Billing</b> hay que cargar un saldo prepago (el mínimo suele ser unos 5 USD).</li>
+        <li>En <a class="neon" href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">platform.openai.com/api-keys</a> toca <b>Create new secret key</b>, cópiala (solo se muestra una vez) y pégala abajo.</li></ol></details>
+    <div class="text-xs text-zinc-500 mt-2">🔒 La clave se guarda solo en este dispositivo. No la compartas. Puedes cambiarla o borrarla en el botón 🤖 IA.</div>
+    <input id="aikey-in" class="mt-3" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Pega aquí tu clave (AIza… o sk-…)">
+    <button class="btn fill w-full mt-3" data-act="aikeysave">Conectar</button>
+    <button class="btn ghost w-full mt-2" data-act="aikeylater">Más tarde</button></div></div>`;
   if (m.type === 'setlog') {
     const ex = exById(m.id), warm = m.t === 'w', chips = (act, items, cur) => items.map(([v, l]) => `<button class="chip ${cur === v ? 'on' : ''}" data-act="${act}" data-v="${v}">${l}</button>`).join('');
     return `<div class="sheet"><div><div class="flex justify-between items-center gap-2"><div class="font-bold">${esc(S.swaps[m.id] || ex.n)}</div><div class="neon text-lg">${m.w} kg × ${m.r}</div></div>
@@ -1124,12 +1252,20 @@ const ACT = {
   resetplan() { if (!confirm('¿Reiniciar el plan de entrenamiento? Solo para pruebas: se quita el bloqueo y vuelve la configuración inicial.')) return; S.planLock = null; S.coachPending = null; S.trainingOnboarded = false; delete S.trainingPreferences.lastWorkout; store.set('planLock', null); store.set('coachPending', null); store.set('trainingOnboarded', false); store.set('trainingPreferences', S.trainingPreferences); toast('Plan desbloqueado'); },
   dietreset() { if (!confirm('¿Reiniciar la dieta? Solo para pruebas: se borra el bloqueo y tus macros calculados.')) return; S.dietLock = null; S.target = null; S.profile = null; store.set('dietLock', null); persist('profile', 'target'); toast('Dieta reiniciada'); },
   aikey() {
-    const k = prompt(hasAiKey() ? 'Ya hay una clave guardada. Pega una nueva, o deja vacío y acepta para BORRARLA:' : 'Pega tu clave de OpenAI (empieza con sk-). Se guarda solo en este dispositivo:');
+    if (!hasAiKey()) { S.modal = { type: 'aisetup' }; return; }
+    const k = prompt(hasAiKey() ? 'Ya hay una clave guardada. Pega una nueva, o deja vacío y acepta para BORRARLA:' : 'Pega tu clave de IA (Gemini: AIza… gratis · OpenAI: sk-…). Se guarda solo en este dispositivo:');
     if (k === null) return; const t = k.trim();
-    if (t && !/^sk-/.test(t)) return alert('Esa clave no parece válida: debe empezar con sk-');
+    if (t && !validKey(t)) return alert('Esa clave no parece válida: debe empezar con AIza (Gemini) o sk- (OpenAI).');
     setAiKey(t); toast(t ? '🤖 Verificando la clave…' : 'IA desconectada');
-    if (t) pickModel(true).then(m => { toast(m ? `🤖 IA conectada · ${m}` : '⚠️ No pude verificar la clave: revisa saldo y permisos'); render(); }).catch(() => {});
+    if (t) pickModel(true).then(m => { toast(m ? `🤖 IA conectada · ${aiProvider()} · ${m}` : '⚠️ No pude verificar la clave: revisa que esté completa y que tengas conexión'); render(); }).catch(() => {});
   },
+  aikeysave() {
+    const t = ($('#aikey-in')?.value || '').trim();
+    if (!validKey(t)) return alert('Esa clave no parece válida: debe empezar con AIza (Gemini) o sk- (OpenAI) y estar completa.');
+    setAiKey(t); store.set('aiAsked', true); S.modal = null; toast('🤖 Verificando la clave…');
+    pickModel(true).then(m => { toast(m ? `🤖 IA conectada · ${aiProvider()} · ${m}` : '⚠️ No pude verificar la clave: revisa que esté completa y que tengas conexión'); render(); }).catch(() => {});
+  },
+  aikeylater() { store.set('aiAsked', true); S.modal = null; toast('Puedes conectarla cuando quieras en el botón 🤖 IA'); },
   switchuser() { sessionStorage.removeItem('al:profile'); sessionStorage.removeItem('alReload'); location.reload(); },
   startworkout() { // INICIAR desde la tarjeta de XP: abre la rutina de hoy
     S.view = 'train'; S.coachOpen = true;
@@ -1296,7 +1432,7 @@ const ACT = {
       try {
         const result = await ai('coach', { task: 'nutrition',
           systemPrompt: 'Eres el coach de nutrición de AGRESSIVE LIFT. Haz preguntas de entrevista SOLO sobre los datos que aparezcan en missing; si missing está vacío el perfil ya está completo: no hagas entrevista, responde y organiza directo. Adapta cada recomendación al mensaje actual, preferencias guardadas y macros restantes; evita respuestas genéricas repetidas. No inventes macros exactos sin cantidades.',
-          question: text, recentMessages: S.nutritionChat.slice(-8), cocina: (() => { try { return S.target ? N.cookPlan(currentMenu(), S.nutritionPreferences).map(b => `${b.day} (${b.title}): ${b.tasks.join(' ')}`) : null; } catch { return null; } })(), horarioTrain: S.trainingSchedule ? { dias: S.trainingSchedule.weekdays, ultimo: S.trainingPreferences.lastWorkout || null } : null, goalGuide: S.trainingPreferences.goal && GOALS[S.trainingPreferences.goal] ? { goal: S.trainingPreferences.goal, nutri: GOALS[S.trainingPreferences.goal].nutri } : null, missing: N.missing(S.nutritionPreferences, !!S.target), target: nutritionTarget(), preferences: S.nutritionPreferences, conversation: S.nutritionChat.slice(-8),
+          question: text, recentMessages: S.nutritionChat.slice(-8), cocina: (() => { try { return S.target ? N.cookPlan(currentMenu(0), S.nutritionPreferences).map(b => `${b.day} (${b.title}): ${b.tasks.join(' ')}`) : null; } catch { return null; } })(), horarioTrain: S.trainingSchedule ? { dias: S.trainingSchedule.weekdays, ultimo: S.trainingPreferences.lastWorkout || null } : null, goalGuide: S.trainingPreferences.goal && GOALS[S.trainingPreferences.goal] ? { goal: S.trainingPreferences.goal, nutri: GOALS[S.trainingPreferences.goal].nutri } : null, missing: N.missing(S.nutritionPreferences, !!S.target), target: nutritionTarget(), preferences: S.nutritionPreferences, conversation: S.nutritionChat.slice(-8),
           remaining: { kcal: remaining.kcal - S.macros.k, protein: remaining.p - S.macros.p,
             carbs: remaining.c - S.macros.c, fat: remaining.f - S.macros.f },
           style: STYLES[S.style][0], meals: S.meals.slice(-3).map(meal => meal.text) });
@@ -1320,8 +1456,18 @@ const ACT = {
   menuday(d) { S.menuDay = +d.i || 0; },
   dietnew() { if (dietLockActive()) return; S.dietLock = null; S.target = null; S.profile = null; store.set('dietLock', null); persist('profile', 'target'); },
   menuregen() { S.menuSeed++; store.set('menuSeed', S.menuSeed); },
+  menuweek(d) { S.menuWeek = Math.max(0, Math.min(3, (S.menuWeek || 0) + (+d.n || 0))); },
+  weekseen() { S.menuWeekSeen = mondayOf(today()); store.set('menuWeekSeen', S.menuWeekSeen); },
+  async pdfmonth() {
+    if (!S.target || !N.ready(S.nutritionPreferences, true)) return toast('Primero completa tu plan nutricional');
+    try { toast('📄 Generando tu plan del mes…'); render(); await new Promise(r => setTimeout(r, 30));
+      downloadPdf(buildMonthPdf(monthData()), `AGRESSIVE-LIFT-plan-${today().slice(0, 7)}.pdf`);
+      S.pdfMonth = today().slice(0, 7); store.set('pdfMonth', S.pdfMonth); toast('✅ PDF descargado: míralo en Descargas');
+    } catch (e) { console.error(e); toast('⚠️ No pude crear el PDF: ' + (e.message || e)); }
+    render();
+  },
   mealadd(d) {
-    const m = currentMenu().days[+d.d]?.[+d.i]; if (!m) return;
+    const m = currentMenu(S.menuWeek || 0).days[+d.d]?.[+d.i]; if (!m) return;
     const xb = totalXp(); addMeal([{ k: m.k, p: m.p, c: m.c, f: m.f }], `${m.slot}: ${m.name}`); syncHist(); xpToast(xb); toast('🍽️ Comida registrada');
   },
   nutritionprompt(d) {
@@ -1332,7 +1478,7 @@ const ACT = {
   step(d) { const i = $('#' + d.f); i.value = Math.max(0, +((parseFloat(i.value) || 0) + +d.s).toFixed(1)); },
   uselast(d) { const w = $('#w-' + d.id), r = $('#r-' + d.id); if (w) w.value = d.w; if (r) r.value = d.r; },
   quickmeal(d) { const m = S.recentMeals[+d.i]; if (!m) return; const xb = totalXp(); addMeal([{ k: m.k, p: m.p, c: m.c, f: m.f }], m.text); syncHist(); xpToast(xb); navigator.vibrate?.(40); toast('⚡ Comida registrada'); },
-  water(d) { const h = hyd(), was = h.ml >= WATER_ML; h.ml = Math.max(0, Math.min(10000, h.ml + +d.n)); setHyd(h); navigator.vibrate?.(25); if (!was && h.ml >= WATER_ML) toast('💧 ¡Meta de agua cumplida!'); },
+  water(d) { const h = hyd(), was = h.ml >= WATER_ML; h.ml = Math.max(0, Math.min(10000, h.ml + +d.n)); setHyd(h); navigator.vibrate?.(25); if (!was && h.ml >= WATER_ML) { const bm = checkBadges(true); if (bm) setTimeout(() => toast(bm), 1800); } if (!was && h.ml >= WATER_ML) toast('💧 ¡Meta de agua cumplida!'); },
   creatine() { const h = hyd(); h.cr = !h.cr; setHyd(h); navigator.vibrate?.(25); if (h.cr) toast('💊 Creatina registrada'); },
   titan() { S.modal = { type: 'titan' }; },
   deloadstart() {
@@ -1745,7 +1891,7 @@ async function nutritionAI(text, input) {
       systemPrompt: 'Eres el nutricionista real de AGRESSIVE LIFT: hablas como una persona, cercano y directo, en español y sin listas numeradas. Haz la entrevista de forma conversacional (UNA pregunta por turno, sin repetir lo ya respondido) y guarda con update_macros todo dato nuevo. Si faltanParaAbrirPlan está vacío, no hagas entrevista: responde y organiza directo. No inventes macros de una comida sin cantidades.',
       faltanParaAbrirPlan: N.missing(S.nutritionPreferences, !!S.target), preferences: S.nutritionPreferences,
       restante: { kcal: rem.kcal - S.macros.k, proteina: rem.p - S.macros.p, carbos: rem.c - S.macros.c, grasa: rem.f - S.macros.f }, estilo: STYLES[S.style][0], comidasHoy: S.meals.slice(-3).map(m => m.text),
-      cocina: (() => { try { return S.target ? N.cookPlan(currentMenu(), S.nutritionPreferences).map(b => `${b.day} (${b.title}): ${b.tasks.join(' ')}`) : null; } catch { return null; } })(),
+      cocina: (() => { try { return S.target ? N.cookPlan(currentMenu(0), S.nutritionPreferences).map(b => `${b.day} (${b.title}): ${b.tasks.join(' ')}`) : null; } catch { return null; } })(),
       horarioTrain: S.trainingSchedule ? { dias: S.trainingSchedule.weekdays, ultimo: S.trainingPreferences.lastWorkout || null } : null,
       goalGuide: S.trainingPreferences.goal && GOALS[S.trainingPreferences.goal] ? { goal: S.trainingPreferences.goal, nutri: GOALS[S.trainingPreferences.goal].nutri } : null,
       recentMessages: hist(S.nutritionChat) });
@@ -1848,7 +1994,9 @@ if (CONFIG_OK) {
   document.addEventListener('visibilitychange', () => { if (!document.hidden && S.user && Date.now() - lastCheck > 3e5) { lastCheck = Date.now(); gate({ user: S.user }); } });
 } else { gate(); }
 try { migrateCalendar(); } catch (e) { console.error(e); }
+try { if (!S.menuWeekSeen) { S.menuWeekSeen = mondayOf(today()); store.set('menuWeekSeen', S.menuWeekSeen); } checkBadges(false); } catch (e) { console.error(e); }
 if (hasAiKey()) pickModel().then(() => render()).catch(() => {});
 maybeTitan();
+if (LOCAL_MODE && !hasAiKey() && !store.get('aiAsked') && !S.modal) S.modal = { type: 'aisetup' }; // primer inicio: pedir la clave de IA
 render();
 window.__ok = 1;
