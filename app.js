@@ -6,12 +6,12 @@ import * as N from './nutrition.js';
 
 /* ---------- Utilidades y persistencia local ---------- */
 const $ = s => document.querySelector(s);
-const VERSION = 'v25';
+const VERSION = 'v26';
 const esc = t => String(t).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 await hydrate(); // IndexedDB → caché en memoria
 const today = () => new Date().toISOString().slice(0, 10);
 const DEFAULT_TRAINING_SCHEDULE = { days: 3, split: 'PPL', cycle: false, workDays: 3, restDays: 4, startDate: today(), weekdays: [1, 3, 5] };
-const TRAINER_SYSTEM_PROMPT = 'Eres el entrenador de AGRESSIVE LIFT. Obedece el mensaje actual del usuario: nunca sustituyas una frecuencia o división explícita por una recomendación genérica de 3 días. Si indica días, descanso cíclico o estilo (PPL, torso/pierna o full body), confirma exactamente esos parámetros y entrega sesiones con ejercicios. Usa el calendario, esquema y plan actuales como contexto. Cuando crees un plan, di siempre: «Tu plan de entrenamiento será [división] por [N] semanas para que cumplas tu objetivo». Si planLock está activo, el plan es INAMOVIBLE hasta planLock.until: no cambies ni propongas cambiar días, división ni ejercicios; recuérdalo y ofrece solo ajustes de carga, técnica o recuperación. No repitas literalmente tu respuesta anterior; responde en español y con acciones concretas.';
+const TRAINER_SYSTEM_PROMPT = 'Eres el entrenador real de AGRESSIVE LIFT: hablas como una persona, cercano y directo, en español y sin listas numeradas. Obedece el mensaje actual: nunca sustituyas una frecuencia o división explícita por una genérica de 3 días. Haz la entrevista de forma conversacional (UNA pregunta por turno, sin repetir lo que ya respondió: revisa preferences, lastWorkout y el historial) y, cuando tengas lo imprescindible, genera el plan en ese mismo turno con command update_routine. Si planLock está activo el plan es INAMOVIBLE hasta planLock.until: no uses update_routine y ofrece solo ajustes de carga, técnica o recuperación. No repitas literalmente tu respuesta anterior.';
 const nutritionHistory = store.get('nutritionChatHistory', []);
 const previousNutritionChat = store.get('nutritionChat', []);
 if (previousNutritionChat.some(message => message.role === 'user')) {
@@ -31,7 +31,7 @@ if (previousTrainingChat.some(message => message.role === 'user')) {
 }
 const TRAINER_GREETING = savedTrainingConfigured
   ? `Tu esquema guardado es ${savedTrainingSchedule?.days || 3} días · ${savedTrainingSchedule?.split || 'PPL'}. ¿Quieres conservarlo o cambiar frecuencia, descansos u objetivo? También puedo ajustar la rutina a tu nivel.`
-  : 'Bienvenido a AGRESSIVE LIFT. Antes de abrir tu rutina necesito conocer cómo entrenas para diseñarla a tu medida. Cuéntame en un solo mensaje (o por partes): 1) tu objetivo (hipertrofia, fuerza, definición), 2) tu nivel (principiante, intermedio o avanzado), 3) cuántos días entrenas y cuántos descansas, 4) qué división prefieres (PPL, torso/pierna o full body), 5) dónde entrenas (gimnasio o casa), cuánto dura tu sesión y si tienes alguna lesión o molestia.';
+  : AI_ON ? 'Hola, soy tu entrenador de AGRESSIVE LIFT. Para armarte la rutina cuéntame con tus palabras qué buscas (ganar músculo, definir o fuerza), cuánto llevas entrenando, qué días puedes ir y si tienes alguna molestia. Yo te voy preguntando lo que falte.' : 'Bienvenido a AGRESSIVE LIFT. Antes de abrir tu rutina necesito conocer cómo entrenas para diseñarla a tu medida. Cuéntame en un solo mensaje (o por partes): 1) tu objetivo (hipertrofia, fuerza, definición), 2) tu nivel (principiante, intermedio o avanzado), 3) cuántos días entrenas y cuántos descansas, 4) qué división prefieres (PPL, torso/pierna o full body), 5) dónde entrenas (gimnasio o casa), cuánto dura tu sesión y si tienes alguna lesión o molestia.';
 const freshCoachChat = [{ role: 'assistant', text: TRAINER_GREETING }];
 store.set('coachChat', freshCoachChat);
 
@@ -1093,7 +1093,7 @@ function render() {
   if (S.screen === 'app') syncHist();
   const html = S.screen === 'boot' ? '<div class="pt-48 text-center neon text-xl">Verificando licencia…</div>'
     : S.screen === 'auth' ? authView() : S.screen === 'locked' ? lockedView()
-    : !S.onboarded ? onboardingView() + sheet() + (S.toast ? `<div class="toast">${esc(S.toast)}</div>` : '')
+    : !S.onboarded ? onboardingView() + sheet() + restBar() + (S.toast ? `<div class="toast">${esc(S.toast)}</div>` : '')
     : header() + (S.view === 'train' ? trainView() : S.view === 'food' ? foodView() : S.view === 'control' ? controlView() : mapView()) + sheet() + restBar() + (S.toast ? `<div class="toast">${esc(S.toast)}</div>` : '');
   const t = document.createElement('div'); t.innerHTML = html; morph($('#app'), t); wake();
 }
@@ -1278,6 +1278,7 @@ const ACT = {
     const input = $('#nutrition-input');
     const text = (input?.value || '').trim();
     if (!text || S.nutritionBusy) return;
+    if (AI_ON || CONFIG_OK) return nutritionAI(text, input); // la IA decide qué falta y qué guardar
     S.nutritionChat.push({ role: 'user', text });
     const parsed = N.parse(text, S.nutritionPreferences);
     const preferences = { ...parsed.prefs, lastUpdate: text, updatedAt: new Date().toISOString() };
@@ -1518,7 +1519,7 @@ function coachReply(text, request = parseTrainingRequest(text)) {
   return `Tengo registrado tu esquema de ${schedule}. Dime cuántos días quieres entrenar o qué división prefieres (PPL o Torso/Pierna) y actualizaré el plan y el calendario con ese cambio.`;
 }
 
-async function sendCoachMessage(text) {
+async function coachLocal(text, noAI = false) {
   const normalized = text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   const goal = /fuerza|potencia/.test(normalized) ? 'fuerza' : /definicion|\bcut\b|cutting|bajar grasa|perder grasa|quemar grasa|secar|perder peso|bajar de peso/.test(normalized) ? 'definición' : /hipertrof|masa|musculo|\bbulk|(?:fase|etapa|ciclo)\s+de\s+volumen|(?:hacer|hago|quiero|en)\s+volumen|subir de peso|aumentar peso/.test(normalized) ? 'hipertrofia' : '';
   const level = /principiante|novato/.test(normalized) ? 'principiante' : /intermedio/.test(normalized) ? 'intermedio' : /avanzado/.test(normalized) ? 'avanzado' : '';
@@ -1584,7 +1585,7 @@ async function sendCoachMessage(text) {
   if (!(AI_ON || CONFIG_OK) && reply === previousReply && !request) {
     reply = `Sigo con tu esquema de ${S.trainingSchedule.days} días · ${S.trainingSchedule.split}. Dime qué detalle quieres ajustar y cambio ese punto.`;
   }
-  const aiWillRun = !!(AI_ON || CONFIG_OK) && !intake;
+  const aiWillRun = !noAI && !!(AI_ON || CONFIG_OK) && !intake;
   S.coachChat.push({ role: 'user', text }, { role: 'assistant', text: aiWillRun ? '🤖 Pensando…' : reply });
   S.coachChat = S.coachChat.slice(-60);
   S.note = reply;
@@ -1628,6 +1629,135 @@ async function sendCoachMessage(text) {
     store.set('coachChat', S.coachChat); store.set('note', S.note);
     render();
   }
+}
+
+/* ---------- v26: la IA decide (Action-Response). La app solo valida y ejecuta el command que devuelve. ---------- */
+const DEFAULT_WD = { 1: [1], 2: [1, 4], 3: [1, 3, 5], 4: [1, 2, 4, 6], 5: [1, 2, 3, 5, 6], 6: [1, 2, 3, 4, 5, 6], 7: [0, 1, 2, 3, 4, 5, 6] };
+const ISO_RX = /^\d{4}-\d{2}-\d{2}$/;
+const hist = list => list.slice(-9).map(m => ({ role: m.role, text: String(m.text).slice(0, 1200) }));
+function normPlan(arr) {
+  if (!Array.isArray(arr)) return [];
+  return arr.slice(0, 7).map((x, i) => {
+    const day = String(x?.day || `Día ${i + 1}`).slice(0, 60), blocks = (Array.isArray(x?.blocks) ? x.blocks : []).map(b => String(b).slice(0, 120)).filter(Boolean).slice(0, 8);
+    const m = (Array.isArray(x?.muscles) ? x.muscles : []).map(k => String(k).toLowerCase()).filter(k => MUSCLES[k]);
+    return { day, focus: String(x?.focus || '').slice(0, 100), blocks, m: m.length ? m : musclesForSession(day) };
+  }).filter(x => x.blocks.length);
+}
+/** command update_routine → valida, guarda el plan, bloquea el bloque y llena el calendario. Devuelve la nota de inicio o null. */
+function applyRoutineCommand(pl) {
+  if (!pl || typeof pl !== 'object') return null;
+  const plan = normPlan(pl.trainingPlan); if (!plan.length) return null;
+  const sc = pl.schedule || {}, cycle = !!sc.cycle, tp = S.trainingPreferences;
+  const wd = [...new Set((Array.isArray(sc.weekdays) ? sc.weekdays : []).map(Number).filter(v => Number.isInteger(v) && v >= 0 && v <= 6))].sort((a, b) => monFirst(a) - monFirst(b));
+  const work = Math.max(1, Math.min(7, Math.round(+sc.workDays) || 3)), rest = Math.max(0, Math.min(6, Math.round(+sc.restDays) || 1));
+  const days = cycle ? work : (wd.length || Math.max(1, Math.min(7, Math.round(+sc.days) || plan.length)));
+  const pr = pl.preferences || {}, lw = pl.lastWorkout || {};
+  const g = String(pr.goal || '').toLowerCase(); if (GOALS[g]) tp.goal = g;
+  const lv = String(pr.level || '').toLowerCase(); if (['principiante', 'intermedio', 'avanzado'].includes(lv)) tp.level = lv;
+  if (pr.injuries) tp.injuries = String(pr.injuries).slice(0, 160);
+  if (pr.place) tp.place = /casa/i.test(pr.place) ? 'casa' : 'gimnasio';
+  if (pr.duration) tp.duration = String(pr.duration).slice(0, 30);
+  const ph = tp.goal !== 'fuerza' && PHASES.find(x => x[1] === String(pr.phase || '').toLowerCase()); if (ph) Object.assign(tp, { phase: ph[1], goal: ph[2], phaseDiet: ph[3] });
+  const lwIso = ISO_RX.test(lw.date || '') ? lw.date : '', focus = FOCUS_RX[lw.focus] ? lw.focus : '';
+  const schedule = { days, split: String(sc.split || 'Push/Pull/Legs').slice(0, 40), cycle, workDays: cycle ? work : days, restDays: cycle ? rest : 7 - days,
+    startDate: ISO_RX.test(sc.startDate || '') && sc.startDate >= today() ? sc.startDate : (lwIso === today() ? shiftIsoDate(today(), 1) : today()),
+    named: !cycle && wd.length >= 2, weekdays: cycle ? DEFAULT_TRAINING_SCHEDULE.weekdays : (wd.length ? wd : DEFAULT_WD[days]) };
+  S.trainingPlan = plan; S.trainingSchedule = schedule;
+  for (const m of [S.manualRest, S.manualTrain]) for (const k of Object.keys(m)) if (k < schedule.startDate) delete m[k];
+  S.customDay = {};
+  const si = Number.isInteger(pl.startIndex) && pl.startIndex >= 0 && pl.startIndex < plan.length ? pl.startIndex : (focus ? nextAfter(focus) : 0);
+  const firstIso = alignSchedule(schedule, si), first = routineSessionForDate(firstIso);
+  tp.lastWorkout = { date: lwIso, focus, none: !!lw.none };
+  const lwTxt = lw.none ? 'llevas un tiempo sin entrenar' : `${lwIso ? fmtLong(lwIso) + ' · ' : ''}${FOCUS_TXT[focus] || 'entrenamiento'}`;
+  const startNote = `📅 Tu último entrenamiento: ${lwTxt}. Empiezas el ${fmtLong(firstIso)}${first ? ' con ' + first.day : ''} y de ahí se arma todo el calendario:\n${calPreview()}`;
+  Object.assign(S, { trainingConfigured: true, trainingOnboarded: true, coachPending: null, showRoutine: false, planLock: makeLock() });
+  ['trainingConfigured', 'trainingOnboarded', 'trainingSchedule', 'trainingPlan', 'trainingPreferences', 'planLock', 'coachPending', 'manualRest', 'manualTrain', 'customDay'].forEach(k => store.set(k, S[k]));
+  applyPlanToCalendar();
+  return startNote;
+}
+async function sendCoachMessage(text) {
+  if (!(AI_ON || CONFIG_OK)) return coachLocal(text, true); // sin IA: modo local por reglas
+  if (S.coachBusy) return;
+  S.coachChat.push({ role: 'user', text }, { role: 'assistant', text: '🤖 Pensando…' });
+  S.coachChat = S.coachChat.slice(-60); store.set('coachChat', S.coachChat); S.coachBusy = true; render();
+  const lock = planLockActive();
+  try {
+    const result = await ai('coach', { task: 'training', systemPrompt: TRAINER_SYSTEM_PROMPT, currentMessage: text,
+      hoy: today(), diaSemana: new Date().toLocaleDateString('es-CO', { weekday: 'long' }), planConfigurado: S.trainingConfigured,
+      planLock: lock ? S.planLock : null, schedule: S.trainingConfigured ? S.trainingSchedule : null, trainingPlan: S.trainingConfigured ? S.trainingPlan : null,
+      calendario: S.trainingConfigured ? calPreview() : null, preferences: S.trainingPreferences, ultimoEntrenoRegistrado: lastWorkoutFromLogs(),
+      goalGuide: S.trainingPreferences.goal && GOALS[S.trainingPreferences.goal] ? { goal: S.trainingPreferences.goal, ...GOALS[S.trainingPreferences.goal] } : null,
+      recentMessages: hist(S.coachChat) });
+    let out = String(result.note || '').trim() || 'Listo.';
+    if (result.command === 'update_routine') {
+      if (lock) out += '\n\n' + lockMsg();
+      else { const sn = applyRoutineCommand(result.payload);
+        out += sn ? '\n\n📋 TU RUTINA:\n\n' + planDetails() + '\n\n' + sn + '\n\n' + goalNote(S.planLock.goal) + '\n\n' + lockMsg(true) : '\n\n⚠️ No pude armar el plan con esos datos. Cuéntame de nuevo tus días y la división que prefieres.'; }
+    }
+    S.coachChat[S.coachChat.length - 1] = { role: 'assistant', text: out }; S.note = out; store.set('note', out);
+  } catch (e) { // la IA falló: modo local por reglas + aviso
+    S.coachChat.splice(-2); S.coachBusy = false; await coachLocal(text, true);
+    const last = S.coachChat[S.coachChat.length - 1]; if (last) last.text += '\n\n⚠️ La IA no respondió (' + (e.message || e) + '); usé el modo local.';
+  }
+  S.coachBusy = false; S.coachChat = S.coachChat.slice(-60); store.set('coachChat', S.coachChat); render();
+}
+/** command update_macros → valida preferencias, perfil y macros (rangos sanos) y los guarda. */
+function applyMacrosCommand(pl) {
+  const notes = []; if (!pl || typeof pl !== 'object') return '';
+  const wasReady = N.ready(S.nutritionPreferences, !!S.target), pr = pl.preferences;
+  if (pr && typeof pr === 'object') {
+    const p = { ...S.nutritionPreferences }; let ch = false;
+    for (const q of N.QUESTIONS) { if (pr[q.k] == null) continue; const ok = q.opts.map(o => o[0]);
+      if (q.multi) { const a = [].concat(pr[q.k]).map(String).filter(v => ok.includes(v)); if (a.length) { p[q.k] = a; ch = true; } }
+      else if (ok.includes(String(pr[q.k]))) { p[q.k] = q.k === 'meals' ? +pr[q.k] : String(pr[q.k]); ch = true; if (q.k === 'style') { S.style = p.style; store.set('style', S.style); } } }
+    if (ch) { S.nutritionPreferences = { ...p, updatedAt: new Date().toISOString() }; store.set('nutritionPreferences', S.nutritionPreferences); }
+  }
+  const pf = pl.profile;
+  if (pf && typeof pf === 'object') {
+    const kg = +pf.kg, h = +pf.h, age = +pf.age, sex = /^(f|mujer)/i.test(String(pf.sex || '')) ? 'f' : /^(m|h)/i.test(String(pf.sex || '')) ? 'm' : '';
+    const gs = String(pf.goal || '').toLowerCase(), goal = DIET[gs] ? gs : /defin|cut|grasa/.test(gs) ? 'cut' : /volum|bulk|masa|musc/.test(gs) ? 'bulk' : /manten|maint/.test(gs) ? 'maint' : '';
+    if (kg > 30 && kg < 300 && h > 120 && h < 230 && age > 13 && age < 100 && sex && goal) {
+      let g = goal; if (dietLockActive() && S.dietLock.goal !== g) { g = S.dietLock.goal; notes.push(`🔒 Tu dieta sigue siendo ${DIET[g].n} hasta el ${fmtLong(S.dietLock.until)}.`); }
+      S.profile = { h, age, sex, goal: g }; if (!dietLockActive()) { S.dietLock = makeDietLock(g); store.set('dietLock', S.dietLock); }
+      S.weights = S.weights.filter(w => w.d !== today()).concat({ d: today(), kg }); if (!S.target) S.target = E.initial({ kg, ...S.profile });
+      persist('profile', 'target', 'weights'); saveBody(S.user.id, { weight: kg });
+    } else notes.push('⚠️ No pude guardar tu perfil: me faltan datos válidos de peso, estatura, edad, sexo u objetivo.');
+  }
+  const tg = pl.target;
+  if (tg && typeof tg === 'object') {
+    if (!S.profile) notes.push('⚠️ Para guardar tus macros necesito antes tu peso, estatura, edad y sexo.');
+    else { const kg = S.weights.at(-1)?.kg || 70, base = E.initial({ kg, ...S.profile, goal: 'maint' }).kcal;
+      const kcal = Math.round(Math.min(base * 1.25, Math.max(base * 0.75, +tg.kcal || S.target?.kcal || base))), asked = Math.round(+tg.kcal) || kcal;
+      const p = Math.round(Math.min(3 * kg, Math.max(1.2 * kg, +tg.p || 2 * kg))), f = Math.round(Math.min(1.5 * kg, Math.max(0.5 * kg, +tg.f || 0.8 * kg)));
+      S.target = { kcal, p, f, c: Math.max(0, Math.round((kcal - 4 * p - 9 * f) / 4)) }; persist('target');
+      if (asked !== kcal) notes.push(`ℹ️ Ajusté las calorías a ${kcal} para mantenerlas en un rango seguro.`); }
+  }
+  if (!wasReady && N.ready(S.nutritionPreferences, !!S.target)) notes.push('✅ Ya puedes abrir «Tu Plan Nutricional».');
+  return notes.join('\n');
+}
+async function nutritionAI(text, input) {
+  S.nutritionChat.push({ role: 'user', text }); store.set('nutritionChat', S.nutritionChat);
+  S.nutritionBusy = true; if (input) input.value = ''; render();
+  let reply;
+  try {
+    const rem = E.scale(nutritionTarget(), budget(today()));
+    const r = await ai('coach', { task: 'nutrition', currentMessage: text, hoy: today(), perfil: S.profile, pesoActual: S.weights.at(-1)?.kg ?? null, objetivoMacros: S.target, dietLock: dietLockActive() ? S.dietLock : null,
+      systemPrompt: 'Eres el nutricionista real de AGRESSIVE LIFT: hablas como una persona, cercano y directo, en español y sin listas numeradas. Haz la entrevista de forma conversacional (UNA pregunta por turno, sin repetir lo ya respondido) y guarda con update_macros todo dato nuevo. Si faltanParaAbrirPlan está vacío, no hagas entrevista: responde y organiza directo. No inventes macros de una comida sin cantidades.',
+      faltanParaAbrirPlan: N.missing(S.nutritionPreferences, !!S.target), preferences: S.nutritionPreferences,
+      restante: { kcal: rem.kcal - S.macros.k, proteina: rem.p - S.macros.p, carbos: rem.c - S.macros.c, grasa: rem.f - S.macros.f }, estilo: STYLES[S.style][0], comidasHoy: S.meals.slice(-3).map(m => m.text),
+      cocina: (() => { try { return S.target ? N.cookPlan(currentMenu(), S.nutritionPreferences).map(b => `${b.day} (${b.title}): ${b.tasks.join(' ')}`) : null; } catch { return null; } })(),
+      horarioTrain: S.trainingSchedule ? { dias: S.trainingSchedule.weekdays, ultimo: S.trainingPreferences.lastWorkout || null } : null,
+      goalGuide: S.trainingPreferences.goal && GOALS[S.trainingPreferences.goal] ? { goal: S.trainingPreferences.goal, nutri: GOALS[S.trainingPreferences.goal].nutri } : null,
+      recentMessages: hist(S.nutritionChat) });
+    reply = String(r.note || '').trim() || 'Listo.';
+    if (r.command === 'update_macros') { const n = applyMacrosCommand(r.payload); if (n) reply += '\n\n' + n; }
+  } catch (e) { // la IA falló: reglas locales + aviso
+    const parsed = N.parse(text, S.nutritionPreferences); if (parsed.prefs.style) { S.style = parsed.prefs.style; store.set('style', S.style); }
+    S.nutritionPreferences = { ...parsed.prefs, lastUpdate: text, updatedAt: new Date().toISOString() }; store.set('nutritionPreferences', S.nutritionPreferences);
+    reply = nutritionReply(text, parsed.changed) + '\n\n⚠️ La IA no respondió: ' + (e.message || e);
+  }
+  S.nutritionChat.push({ role: 'assistant', text: reply }); S.nutritionChat = S.nutritionChat.slice(-40);
+  S.nutritionBusy = false; store.set('nutritionChat', S.nutritionChat); render();
 }
 
 function nutritionReply(text, changed = []) {
