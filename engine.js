@@ -66,3 +66,44 @@ export function parseMeal(text) {
   const name = String(text).replace(re, '').replace(/\s+/g, ' ').trim().slice(0, 60) || 'Comida';
   return { items: [{ name, k: Math.round(t.k), p: Math.round(t.p), c: Math.round(t.c), f: Math.round(t.f) }], confidence: 1, note: 'Macros manuales.' };
 }
+
+/* ---------- v24: récord cercano, fatiga, descarga, reporte semanal, progreso de bloque ---------- */
+/** Mensaje de récord: e1RM (Epley, igual que isPR) de la carga w×r vs. el mejor histórico (sin calentamientos ni drops). */
+export function prHint(hist = [], w, r = 8) {
+  const h = hist.filter(s => s.t !== 'w' && s.t !== 'drop');
+  if (!h.length || !(w > 0) || !(r > 0)) return null;
+  const e1 = s => s.w * (1 + s.r / 30), b = h.reduce((m, s) => (e1(s) > e1(m) ? s : m)), p = e1({ w, r }) / e1(b);
+  if (p > 1) return { kind: 'break', pct: p, text: `🔥 Tu récord es ${b.w} kg × ${b.r}. ¡Hoy puedes romperlo!` };
+  if (p >= 0.92) return { kind: 'near', pct: p, text: `💪 Tu récord es ${b.w} kg × ${b.r}, ¡estás cerca!` };
+  return null;
+}
+/** Fatiga: en ≥minEx ejercicios, las 2 últimas sesiones (≤14 d, sin contar hoy) con RIR 0 en la serie top y menos reps con el MISMO peso. */
+export function fatigue(logs, { minEx = 2, today = new Date().toISOString().slice(0, 10) } = {}) {
+  const ids = [];
+  for (const [id, rows] of Object.entries(logs)) {
+    const work = rows.filter(s => s.t !== 'w' && s.t !== 'drop' && s.d < today);
+    const days = [...new Set(work.map(s => s.d))].sort().slice(-2);
+    if (days.length < 2 || (Date.parse(today) - Date.parse(days[0])) / 864e5 > 14) continue;
+    const [a, b] = days.map(d => { const x = work.filter(s => s.d === d), w = Math.max(...x.map(s => s.w)), t = x.filter(s => s.w === w); return { w, rir: avg(t.map(s => s.rir)), r: avg(t.map(s => s.r)) }; });
+    if (a.rir <= 0.5 && b.rir <= 0.5 && a.w === b.w && b.r < a.r) ids.push(id);
+  }
+  return { flag: ids.length >= minEx, ids };
+}
+/** Descarga activa: −15 % sobre la carga máxima de la sesión previa (mitad de series, RIR 3-4). */
+export const deload = prev => ({ action: 'descarga', w: prev.length ? r25(Math.max(...prev.map(s => s.w)) * 0.85) : null, note: 'Descarga activa: −15 % de carga, mitad de series y RIR 3-4. Técnica limpia, sin fallo.' });
+/** Reporte semanal: tonelaje, series, PRs, días entrenados y días en meta (±10 % del presupuesto, mismo criterio que el XP). */
+export function weekReport({ logs, hist, budget, days }) {
+  const rows = Object.values(logs).flat().filter(x => days.includes(x.d));
+  return {
+    ton: Math.round(rows.reduce((a, x) => a + x.w * x.r, 0)), sets: rows.length, prs: rows.filter(x => x.pr).length,
+    trainDays: new Set(rows.map(x => x.d)).size, logged: days.filter(d => hist[d]?.n > 0).length,
+    onTarget: days.filter(d => hist[d]?.n > 0 && budget(d) && hist[d].k >= 0.9 * budget(d) && hist[d].k <= 1.1 * budget(d)).length,
+  };
+}
+/** Progreso de un bloque (planLock/dietLock {start, until}): día, semana, días restantes y %. */
+export function planProgress(lock, today) {
+  if (!lock?.start || !lock?.until) return null;
+  const d = iso => Date.parse(iso + 'T12:00:00'), total = Math.round((d(lock.until) - d(lock.start)) / 864e5) + 1, day = Math.round((d(today) - d(lock.start)) / 864e5) + 1, n = Math.max(1, Math.min(total, day));
+  return { day: n, totalDays: total, week: Math.ceil(n / 7), weeks: Math.ceil(total / 7), left: total - n, pct: Math.round(n / total * 100), done: day > total };
+}
+

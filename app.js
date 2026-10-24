@@ -6,7 +6,7 @@ import * as N from './nutrition.js';
 
 /* ---------- Utilidades y persistencia local ---------- */
 const $ = s => document.querySelector(s);
-const VERSION = 'v23';
+const VERSION = 'v24';
 const esc = t => String(t).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 await hydrate(); // IndexedDB → caché en memoria
 const today = () => new Date().toISOString().slice(0, 10);
@@ -102,7 +102,7 @@ const dAdd = n => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
 /* ---------- Plan bloqueado: la rutina no cambia hasta cumplir el objetivo ----------
    Criterio: los ejercicios necesitan >=6 semanas para adaptarse y medir progreso; mesociclos de 4-8 semanas (principiante/intermedio 8, avanzado 6).
    Lo que sí cambia cada sesión es la carga (el motor ajusta peso/reps). */
-const planLockActive = () => !!S.planLock && dAdd(0) <= S.planLock.until;
+const planLockActive = () => !!S.planLock && !deloadOn() && dAdd(0) <= S.planLock.until; // v24: la descarga activa pausa el bloqueo
 const fmtLong = iso => new Date(iso + 'T12:00:00').toLocaleDateString('es-CO', { day: 'numeric', month: 'long' });
 /* Tipos de rutina por objetivo (resumen de la investigación: definición = mantener intensidad y proteína alta con déficit moderado;
    volumen/hipertrofia = 10-20 series duras por músculo/semana, 2 frecuencia, superávit pequeño). */
@@ -191,6 +191,7 @@ const S = {
   trainingSchedule: savedTrainingSchedule || DEFAULT_TRAINING_SCHEDULE,
   trainingConfigured: savedTrainingConfigured,
   planLock: store.get('planLock', null), coachPending: store.get('coachPending', null), trainingOnboarded: store.get('trainingOnboarded', savedTrainingConfigured), dietLock: store.get('dietLock', null),
+  recentMeals: store.get('recentMeals', []), hydra: store.get('hydra', {}), deload: store.get('deload', null), deloadSkip: store.get('deloadSkip', ''), flashId: '', flashUntil: 0, flashN: 0,
   onboarded: store.get('onboarded', savedTrainingConfigured),
   trainingPreferences: store.get('trainingPreferences', {}),
   trainingSectionTab: 'routine',
@@ -255,15 +256,29 @@ async function wake() {
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) wake(); });
 // Temporizador de descanso: el tick solo toca el texto del reloj (sin re-render).
-const beep = () => { try { const c = new (window.AudioContext || window.webkitAudioContext)(), o = c.createOscillator(); o.connect(c.destination); o.frequency.value = 880; o.start(); setTimeout(() => { o.stop(); c.close(); }, 400); } catch {} };
+// Audio desbloqueado en un gesto (iOS lo exige) + beep triple con onda cuadrada.
+let AC;
+const unlockAudio = () => { try { AC ||= new (window.AudioContext || window.webkitAudioContext)(); if (AC.state === 'suspended') AC.resume(); } catch {} };
+const beep = () => { try { unlockAudio(); const t0 = AC.currentTime; [0, .24, .48].forEach((o, i) => { const osc = AC.createOscillator(), g = AC.createGain(); osc.type = 'square'; osc.frequency.value = i === 2 ? 1320 : 990;
+  g.gain.setValueAtTime(.0001, t0 + o); g.gain.exponentialRampToValueAtTime(.4, t0 + o + .02); g.gain.exponentialRampToValueAtTime(.0001, t0 + o + .2); osc.connect(g); g.connect(AC.destination); osc.start(t0 + o); osc.stop(t0 + o + .22); }); } catch {} };
+const askNotif = () => { try { if ('Notification' in window && Notification.permission === 'default' && !store.get('notifAsked')) { store.set('notifAsked', 1); Notification.requestPermission(); } } catch {} };
+const swPost = m => { try { navigator.serviceWorker?.controller?.postMessage(m); } catch {} };
+let sentRest = 0; // el SW recibe el fin del descanso (timestamp) cada vez que cambia: +30 s, saltar, nueva serie…
+const restSync = () => { if (S.rest === sentRest) return; sentRest = S.rest; swPost(S.rest > Date.now() ? { type: 'rest', at: S.rest, body: S.restWhy || 'Vuelve a la barra: toca la siguiente serie.' } : { type: 'rest-cancel' }); };
 const fmt = ms => { const s = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 const restBar = () => S.rest > Date.now() ? `<div class="rest" id="rest"><b id="rt" class="neon">${fmt(S.rest - Date.now())}</b><span class="text-sm text-zinc-400 flex-1 min-w-0 resttxt">${esc(S.restWhy || 'Descanso')}</span>
   <span class="flex gap-1"><button class="chip" data-act="rest30">+30 s</button><button class="chip" data-act="restoff">Saltar</button></span></div>` : '';
-setInterval(() => {
+function tickRest() { // el fin es un timestamp: sobrevive a segundo plano y se resuelve al volver
   if (!S.rest) return; const left = S.rest - Date.now();
-  if (left > 0) { const t = document.getElementById('rt'); if (t) t.textContent = fmt(left); }
-  else { S.rest = 0; S.restWhy = ''; beep(); navigator.vibrate?.([200, 100, 200]); render(); }
-}, 250);
+  if (left > 0) { const t = document.getElementById('rt'); if (t) t.textContent = fmt(left); return; }
+  const late = left < -15e3; S.rest = 0; S.restWhy = ''; sentRest = 0; swPost({ type: 'rest-cancel' });
+  if (!late) { beep(); navigator.vibrate?.([300, 100, 300, 100, 500]); }
+  if (!late && document.hidden && 'Notification' in window && Notification.permission === 'granted')
+    navigator.serviceWorker?.ready.then(r => r.showNotification('⏱ ¡Descanso terminado!', { body: 'Vuelve a la barra: toca la siguiente serie.', tag: 'rest', renotify: true, vibrate: [300, 100, 300, 100, 500], icon: 'icon-192.png', badge: 'icon-192.png' })).catch(() => {});
+  render();
+}
+setInterval(tickRest, 250);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { unlockAudio(); tickRest(); } });
 // Mini-gráficas SVG.
 const spark = v => { if (v.length < 2) return ''; const lo = Math.min(...v), hi = Math.max(...v);
   return `<svg viewBox="0 0 120 28" preserveAspectRatio="none" class="spark"><polyline fill="none" stroke="#ff0033" stroke-width="2" vector-effect="non-scaling-stroke" points="${v.map((y, i) => `${(i / (v.length - 1) * 120).toFixed(1)},${(26 - (y - lo) / ((hi - lo) || 1) * 24).toFixed(1)}`).join(' ')}"/></svg>`; };
@@ -333,10 +348,60 @@ const dropBanner = (id, p) => `<div class="card on mt-3"><div class="font-bold n
   <div class="mt-2"><div class="step"><button data-act="step" data-f="dr-${id}-${p.step}" data-s="-1" aria-label="menos">−</button><input id="dr-${id}-${p.step}" type="number" inputmode="numeric" value="${DROP_REPS[p.step]}"><button data-act="step" data-f="dr-${id}-${p.step}" data-s="1" aria-label="más">＋</button></div>
   <button class="btn fill w-full mt-2" data-act="dropsave" data-id="${id}">Guardar descenso</button></div>
   <button class="underline text-xs text-zinc-500 mt-2" data-act="dropskip" data-id="${id}">Cancelar drop set</button></div>`;
+/* ---------- v24: último peso, PR cercano, descarga activa, agua/creatina, favoritos, reporte, meta ---------- */
+const exAdvice = id => { const prev = S.swaps[id] ? [] : prevSets(id); return deloadOn() ? E.deload(prev) : E.regulate(prev, mesoWeek(), S.meso.weeks); };
+const lastPill = id => { const l = (S.logs[id] || []).filter(x => x.t !== 'w' && x.t !== 'drop').at(-1); if (!l) return '';
+  return `<button class="last-pill" data-act="uselast" data-id="${id}" data-w="${l.w}" data-r="${l.r}" aria-label="Usar el último peso">↺ Último: <b>${l.w} kg</b> × ${l.r} · ${l.d === today() ? 'hoy' : l.d.slice(5)}</button>`; };
+const prBox = (id, sg) => { if (!sg || sg.w == null || raveOn() || deloadOn() || S.swaps[id]) return '';
+  const pv = prevSets(id), r = pv.length ? Math.round(pv.reduce((n, s) => n + s.r, 0) / pv.length) : 8, h = E.prHint(S.logs[id] || [], sg.w, r);
+  return h ? `<div class="pr-hint ${h.kind}">${esc(h.text)}</div>` : ''; };
+const flashCls = id => (S.flashId === id && Date.now() < S.flashUntil ? 'sv' + (S.flashN % 2) : '');
+const celebrate = (id, pr) => { navigator.vibrate?.(pr ? [100, 50, 100, 50, 250] : [100, 50, 100]); S.flashId = id; S.flashUntil = Date.now() + 700; S.flashN++; unlockAudio(); askNotif(); };
+
+// Descarga activa: se sugiere (nunca se impone) tras 2 sesiones seguidas al fallo con caída de reps; al aceptar, pausa el bloqueo y lo extiende 7 días.
+const deloadOn = () => !!S.deload && S.deload.until >= today();
+const deloadCard = () => {
+  if (deloadOn()) return `<div class="card on mt-3 text-sm">🌿 <b class="neon">Descarga activa</b> hasta el ${fmtLong(S.deload.until)}: −15 % de carga, la mitad de series y RIR 3-4. El bloqueo del plan queda en pausa y se extendió 7 días.</div>`;
+  if (S.deloadSkip > today() || (S.deload && S.deload.until >= dAdd(-14))) return '';
+  const f = E.fatigue(S.logs, { today: today() }); if (!f.flag) return '';
+  const names = f.ids.slice(0, 3).map(id => esc(exById(id)?.n || id)).join(', ');
+  return `<div class="card on mt-3"><div class="font-bold neon">⚠️ Fatiga acumulada</div><div class="text-sm text-zinc-400 mt-1">${names}: 2 sesiones seguidas al fallo (RIR 0) y menos reps con el mismo peso. Te sugiero ${planLockActive() ? 'pausar el bloqueo del plan y hacer' : 'hacer'} 1 semana de descarga activa.</div>
+  <div class="flex gap-2 mt-2"><button class="btn fill flex-1" data-act="deloadstart">Descarga 1 semana</button><button class="btn ghost flex-1" data-act="deloadskip">Ahora no</button></div></div>`; };
+
+// Agua y creatina: un solo mapa {fecha: {ml, cr}} en IndexedDB (por perfil, se reinicia solo cada día).
+const WATER_ML = 4000;
+const hyd = () => S.hydra[today()] || { ml: 0, cr: false };
+const setHyd = h => { S.hydra[today()] = h; S.hydra = Object.fromEntries(Object.entries(S.hydra).sort(([x], [y]) => x.localeCompare(y)).slice(-60)); store.set('hydra', S.hydra); };
+const hydraCard = () => { const h = hyd();
+  return `<div class="card"><div class="flex justify-between items-center"><div class="font-bold">💧 Agua · <span class="${h.ml >= WATER_ML ? 'neon' : ''}">${+(h.ml / 1000).toFixed(2)} / ${WATER_ML / 1000} L</span></div><button class="chip !px-3" data-act="water" data-n="-250" aria-label="Quitar 250 ml">−250</button></div>
+  <div class="xpbar big mt-2"><i style="width:${Math.min(100, h.ml / WATER_ML * 100)}%;background:linear-gradient(90deg,#38bdf8,#bae6fd);box-shadow:0 0 8px #38bdf8"></i></div>
+  <div class="hydra-row"><button class="chip" data-act="water" data-n="250">+250 ml</button><button class="chip" data-act="water" data-n="500">+500 ml</button><button class="chip" data-act="water" data-n="1000">+1 L</button></div>
+  <button class="chk" data-act="creatine" aria-pressed="${h.cr}"><i>${h.cr ? '✓' : ''}</i><span>Creatina tomada hoy</span></button></div>`; };
+
+// Favoritos: las 3 últimas comidas distintas, un toque para repetirlas (sin llamar a la IA).
+const quickMeals = () => S.recentMeals.length ? `<div class="quick-meals"><div class="text-xs text-zinc-500 mb-1">⚡ Repetir una comida reciente</div><div class="qm-row">${S.recentMeals.map((m, i) => `<button class="qm" data-act="quickmeal" data-i="${i}"><b>${esc(m.text)}</b><span>${m.k} kcal · P${m.p} C${m.c} G${m.f}</span></button>`).join('')}</div></div>` : '';
+
+// Proyección de meta: semana X de Y del bloque de entreno y de dieta (sale de planLock / dietLock).
+const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+const goalLine = (P, label) => `<div class="mt-3"><div class="flex justify-between text-sm gap-2"><b>${label}</b><span class="text-zinc-400" style="white-space:nowrap">${P.done ? '✅ completada' : `${P.left} ${P.left === 1 ? 'día' : 'días'} restantes`}</span></div><div class="xpbar big mt-1"><i style="width:${P.pct}%"></i></div></div>`;
+const goalBar = () => { const tp = E.planProgress(S.planLock, today()), dp = E.planProgress(S.dietLock, today()); if (!tp && !dp) return '';
+  return `<div class="card"><div class="font-bold">🎯 Proyección de meta</div>${tp ? goalLine(tp, `Entreno · semana ${tp.week} de ${tp.weeks} de ${esc(cap(S.planLock.goal || 'tu plan'))}`) : ''}${dp ? goalLine(dp, `Dieta · semana ${dp.week} de ${dp.weeks} de ${esc(DIET[S.dietLock.goal]?.n || 'tu dieta')}`) : ''}</div>`; };
+
+// Reporte semanal del Titán: se abre solo los domingos (una vez) y a demanda desde Control.
+const weekDays = off => Array.from({ length: 7 }, (_, i) => dAdd(i - 6 - off));
+const titanSheet = () => {
+  const rep = off => E.weekReport({ logs: S.logs, hist: S.macroHist, budget: histBudget, days: weekDays(off) }), r = rep(0), p = rep(7), dv = p.ton ? Math.round((r.ton - p.ton) / p.ton * 100) : null;
+  return `<div class="sheet"><div><div class="text-xs text-zinc-500 uppercase tracking">Reporte semanal</div><div class="text-2xl font-black neon">${r.trainDays >= 3 ? '🏆 Semana de Titán' : '💪 Semana de construcción'}</div>
+  <div class="statgrid"><div class="stat"><b>${r.ton.toLocaleString('es-CO')}</b><span>kg movidos</span></div><div class="stat"><b>${r.onTarget}/7</b><span>días en meta</span></div><div class="stat"><b>${r.prs}</b><span>PRs rotos</span></div></div>
+  <div class="text-sm text-zinc-400 mt-3">${r.trainDays} días entrenados · ${r.sets} series${dv == null ? '' : ` · ${dv >= 0 ? '▲' : '▼'} ${Math.abs(dv)} % de tonelaje vs. la semana pasada`}</div>
+  <div class="text-sm mt-2">${!S.target ? 'Configura tu perfil en Nutrición para medir la adherencia calórica.' : r.logged < 4 ? 'Registra tus comidas todos los días: sin datos, la adherencia no cuenta.' : r.onTarget >= 5 ? 'Disciplina de élite con la comida.' : 'El físico se decide en la cocina: apunta a 5 o más días en meta.'}</div>
+  <button class="btn fill w-full mt-4" data-act="closemodal">¡A por la próxima semana!</button></div></div>`; };
+const maybeTitan = () => { if (new Date().getDay() !== 0 || store.get('titanSeen') === today() || !S.onboarded || S.modal || !allRows().length) return; S.modal = { type: 'titan' }; };
+
 function exCard(e) {
   const name = S.swaps[e.id] || e.n, sets = todaySets(e.id), open = S.open === e.id, dv = S.devil[e.id], done = isDone(e.id), dp = S.drop[e.id];
   const work = sets.filter(x => x.t !== 'w' && x.t !== 'drop'), plan = e.sets || 3;
-  const sg = open ? E.regulate(S.swaps[e.id] ? [] : prevSets(e.id), mesoWeek(), S.meso.weeks) : null;
+  const sg = open ? exAdvice(e.id) : null;
   return `<div class="card ${open ? 'on' : ''} ${done ? 'done' : ''}">
   <div class="flex justify-between items-start" data-act="toggle" data-id="${e.id}">
     <div><div class="font-bold text-lg leading-tight">${done ? '✅ ' : ''}${esc(name)}${S.swaps[e.id] ? ' <span class="text-xs neon">SWAP</span>' : ''}</div>
@@ -345,9 +410,10 @@ function exCard(e) {
   ${sets.map((x, i) => `<div class="text-sm text-zinc-400 mt-2 ${S.fresh === e.id && i === sets.length - 1 ? 'pop' : ''}">${setLabel(x.t)} · ${x.w} kg × ${x.r}${x.t === 'w' ? '' : ` · RIR ${x.rir}`}${x.fail && x.fail !== 'Músculo objetivo' ? ` · limitó: ${x.fail}` : ''}</div>`).join('')}
   <div class="card !p-2 mt-2 text-sm ${sg.action === 'descarga' ? 'on' : ''}"><b class="neon">${sg.action.toUpperCase()}</b>${sg.w ? ' · ' + sg.w + ' kg' : ''}<div class="text-zinc-400">${esc(sg.note)}</div></div>
   ${spark(e1h(e.id))}
+  ${prBox(e.id, sg)}
   ${dp ? dropBanner(e.id, dp) : `
-  <div class="flex gap-2 mt-3">${['w', 'r'].map(f => `<div class="step"><button data-act="step" data-f="${f}-${e.id}" data-s="${f === 'w' ? -2.5 : -1}" aria-label="menos">−</button><input id="${f}-${e.id}" type="number" inputmode="${f === 'w' ? 'decimal' : 'numeric'}" placeholder="${f === 'w' ? 'kg' : 'reps'}" ${f === 'w' && sg.w != null ? `value="${sg.w}"` : ''}><button data-act="step" data-f="${f}-${e.id}" data-s="${f === 'w' ? 2.5 : 1}" aria-label="más">＋</button></div>`).join('')}</div>
-  <button class="btn fill w-full mt-2" data-act="logset" data-id="${e.id}">Registrar serie ${work.length + 1}</button>`}
+  ${lastPill(e.id)}<div class="flex gap-2 mt-3">${['w', 'r'].map(f => `<div class="step"><button data-act="step" data-f="${f}-${e.id}" data-s="${f === 'w' ? -2.5 : -1}" aria-label="menos">−</button><input id="${f}-${e.id}" type="number" inputmode="${f === 'w' ? 'decimal' : 'numeric'}" placeholder="${f === 'w' ? 'kg' : 'reps'}" ${f === 'w' && sg.w != null ? `value="${sg.w}"` : ''}><button data-act="step" data-f="${f}-${e.id}" data-s="${f === 'w' ? 2.5 : 1}" aria-label="más">＋</button></div>`).join('')}</div>
+  <button class="btn fill w-full mt-2 ${flashCls(e.id)}" data-act="logset" data-id="${e.id}">Registrar serie ${work.length + 1}</button>`}
   <div class="flex gap-2 mt-2">
     <button class="btn flex-1 ${dv ? 'fill' : ''}" data-act="devil" data-id="${e.id}">⬇ Drop set${dv ? ' ON' : ''}</button>
     <button class="btn ghost flex-1" data-act="exercisevideo" data-exercise="${esc(name)}" aria-label="Ver cómo se hace ${esc(name)}">▶ Técnica</button>
@@ -649,6 +715,7 @@ const loggingCards = () => {
 };
 const trainingRoutinePanel = () => `<div class="routine-panel">
   
+  ${deloadCard()}
   ${routineDayPicker()}
   ${routineDayPanel()}
   ${loggingCards()}
@@ -701,6 +768,7 @@ ${planCards()}
   <input id="meal" placeholder="${(LOCAL_MODE && !AI_ON) ? 'Ej: arroz y pollo 650 kcal 45p 70c 15g' : 'Ej: corrientazo con pollo, arroz y plátano, jugo de mora'}">
   <button class="btn fill w-full mt-2" data-act="analyze" ${S.busy ? 'disabled' : ''}>${S.busy ? 'Analizando…' : ((LOCAL_MODE && !AI_ON) ? 'Registrar comida' : 'Analizar con IA')}</button>
   ${S.msg ? `<p class="text-sm text-red-400 mt-2">${esc(S.msg)}</p>` : ''}
+  ${quickMeals()}
   ${pv ? `<div class="card on mt-2 text-sm">${pv.items.map(i => `<div>${esc(i.name)} · ${i.k} kcal · P${i.p} C${i.c} G${i.f}</div>`).join('')}
     <div class="text-zinc-400 mt-1">Estimación (confianza ${Math.round(pv.confidence * 100)} %). ${esc(pv.note)}</div>
     <div class="flex gap-2 mt-2"><button class="btn fill flex-1" data-act="confirmmeal">Registrar</button><button class="btn ghost flex-1" data-act="discard">Descartar</button></div></div>` : ''}
@@ -922,9 +990,11 @@ const controlView = () => {
   <button class="btn fill w-full mt-3" data-act="startworkout">🔥 INICIAR ENTRENAMIENTO</button>
   <div class="text-xs text-zinc-400 mt-2">XP por: series ${br.sets} · días entrenados ${br.train} · comida ${br.meals + br.target} · ejercicios terminados ${br.done} · peso ${br.weigh} · descansos ${br.rest}</div>
   <details class="mt-2 text-sm text-zinc-400"><summary>Cómo gano XP</summary>Serie +10 (+3 si RIR 0-1, +5 drop set; calentamiento +3) · ejercicio terminado +10 · PR +50 · día entrenado +40 · comida registrada +5 · día dentro de tu meta +25 · pesaje +15 · descanso marcado +10. Rangos: Novato, Agresivo (nv 5), Bestia (10), Titán (15), Élite (25), Leyenda (40).</details></div>
+${goalBar()}
 <div class="card"><div class="font-bold">Hoy · ${state}</div>
   ${S.target ? `<div class="text-sm text-zinc-400 mt-1">${m.k} / ${b} kcal · P ${m.p} · C ${m.c} · G ${m.f}</div><div class="h-2 bg-zinc-900 mt-2 rounded"><div class="h-2 rounded" style="width:${Math.min(100, b ? m.k / b * 100 : 0)}%;background:#ff2b57"></div></div>` : '<div class="text-sm text-zinc-500 mt-1">Configura tu perfil en Nutrición para ver tus calorías.</div>'}</div>
-<div class="card"><div class="font-bold">Esta semana · series por día</div>${bars(sets7, lab)}
+${hydraCard()}
+<div class="card"><div class="flex justify-between items-center"><div class="font-bold">Esta semana · series por día</div><button class="chip !px-3" data-act="titan">📊 Reporte</button></div>${bars(sets7, lab)}
   <div class="statgrid"><div class="stat"><b>${sets7.reduce((p, c) => p + c, 0)}</b><span>series</span></div><div class="stat"><b>${ton}</b><span>kg movidos</span></div><div class="stat"><b>${prs}</b><span>PRs</span></div>
   <div class="stat"><b>${sets7.filter(Boolean).length}/7</b><span>días entrenados</span></div><div class="stat"><b>${rir}</b><span>RIR medio</span></div><div class="stat"><b>${days.filter(d => S.dayRest[d]).length}</b><span>descansos</span></div></div></div>
 <div class="card"><div class="font-bold mb-1">Volumen semanal vs MRV</div>${Object.keys(MUSCLES).map(k => { const n = weekDone(k), mv = MUSCLES[k].mrv; return `<div class="ctl-row"><span style="width:92px">${MUSCLES[k].n}</span><div class="mrv flex-1"><i style="width:${Math.min(100, n / mv * 100)}%;${n >= mv ? 'background:#fff' : ''}"></i></div><span class="text-xs text-zinc-400" style="width:52px;text-align:right">${n}/${mv}</span></div>`; }).join('')}</div>
@@ -939,6 +1009,7 @@ const sheet = () => {
   const m = S.modal; if (!m) return '';
   if (m.type === 'acr') { const g = GLOSSARY[m.k];
     return `<div class="sheet"><div><div class="text-xs text-zinc-500 uppercase tracking">Significado</div><div class="font-bold text-lg neon">${esc(m.k)} · ${esc(g.n)}</div><div class="text-sm mt-2">${esc(g.d)}</div>${g.p ? `<div class="text-sm mt-2">🎯 Te conviene si ${esc(g.p)}</div>` : ''}${g.a ? `<div class="text-sm text-zinc-400 mt-2">📲 En tu plan: ${esc(g.a)}</div>` : ''}<button class="btn ghost w-full mt-3" data-act="closemodal">Cerrar</button></div></div>`; }
+  if (m.type === 'titan') return titanSheet();
   if (m.type === 'setlog') {
     const ex = exById(m.id), warm = m.t === 'w', chips = (act, items, cur) => items.map(([v, l]) => `<button class="chip ${cur === v ? 'on' : ''}" data-act="${act}" data-v="${v}">${l}</button>`).join('');
     return `<div class="sheet"><div><div class="flex justify-between items-center gap-2"><div class="font-bold">${esc(S.swaps[m.id] || ex.n)}</div><div class="neon text-lg">${m.w} kg × ${m.r}</div></div>
@@ -1078,7 +1149,7 @@ const ACT = {
     S.modal = { type: 'exercisevideo', name, motion: exerciseMotionType(name), loading: true, media: null, ytLoading: !!S.ytkey };
     loadExMedia(name); loadYT(name);
   },
-  closemodal() { S.modal = null; },
+  closemodal() { if (S.modal?.type === 'titan') store.set('titanSeen', today()); S.modal = null; },
   acr(d) { if (GLOSSARY[d.k]) S.modal = { type: 'acr', k: d.k }; },
   dellast(d) { const l = S.logs[d.id]; if (l?.length && confirm('¿Borrar la última serie de este ejercicio?')) { l.pop(); store.set('logs', S.logs); } },
   delmeal(d) { const i = +d.i, x = S.meals[i]; if (!x || !confirm('¿Borrar esta comida?')) return; for (const k of ['k', 'p', 'c', 'f']) S.macros[k] = Math.max(0, S.macros[k] - (x[k] || 0)); S.meals.splice(i, 1); persist('macros', 'meals'); },
@@ -1121,7 +1192,7 @@ const ACT = {
       const ws = []; let x = m.w; for (let i = 0; i < 3; i++) { x = E.r25(x * 0.8); ws.push(x); }
       S.drop[m.id] = { step: 0, ws }; rp = { sec: 10, why: `Drop set: baja a ${ws[0]} kg YA (−20 %), sin descansar` };
     } else rp = restPlan({ id: m.id, t: m.t, r: m.r, rir: row.rir });
-    S.rest = Date.now() + rp.sec * 1000; S.restWhy = rp.why; S.fresh = m.id; S.modal = null; xpToast(xb);
+    S.rest = Date.now() + rp.sec * 1000; S.restWhy = rp.why; S.fresh = m.id; S.modal = null; celebrate(m.id, isPR && !raveOn()); xpToast(xb);
     if (isPR && !raveOn()) setTimeout(() => toast('🔥 ¡NUEVO PR! +50 XP'), 120);
   },
   dropsave(d) {
@@ -1133,7 +1204,7 @@ const ACT = {
     p.step++; S.fresh = id;
     const rp = p.step >= 3 ? restPlan({ id, t: 3, r, rir: 0, drop: 'end' }) : { sec: 10, why: `Drop set: baja a ${p.ws[p.step]} kg YA, sin descansar` };
     if (p.step >= 3) delete S.drop[id];
-    S.rest = Date.now() + rp.sec * 1000; S.restWhy = rp.why; xpToast(xb);
+    S.rest = Date.now() + rp.sec * 1000; S.restWhy = rp.why; celebrate(id, false); xpToast(xb);
   },
   dropskip(d) { delete S.drop[d.id]; },
   doneex(d) { // marca terminado y pasa al siguiente ejercicio del orden de la rutina
@@ -1215,6 +1286,17 @@ const ACT = {
     return ACT.nutritionsend();
   },
   step(d) { const i = $('#' + d.f); i.value = Math.max(0, +((parseFloat(i.value) || 0) + +d.s).toFixed(1)); },
+  uselast(d) { const w = $('#w-' + d.id), r = $('#r-' + d.id); if (w) w.value = d.w; if (r) r.value = d.r; },
+  quickmeal(d) { const m = S.recentMeals[+d.i]; if (!m) return; const xb = totalXp(); addMeal([{ k: m.k, p: m.p, c: m.c, f: m.f }], m.text); syncHist(); xpToast(xb); navigator.vibrate?.(40); toast('⚡ Comida registrada'); },
+  water(d) { const h = hyd(), was = h.ml >= WATER_ML; h.ml = Math.max(0, Math.min(10000, h.ml + +d.n)); setHyd(h); navigator.vibrate?.(25); if (!was && h.ml >= WATER_ML) toast('💧 ¡Meta de agua cumplida!'); },
+  creatine() { const h = hyd(); h.cr = !h.cr; setHyd(h); navigator.vibrate?.(25); if (h.cr) toast('💊 Creatina registrada'); },
+  titan() { S.modal = { type: 'titan' }; },
+  deloadstart() {
+    S.deload = { start: today(), until: dAdd(6) }; store.set('deload', S.deload);
+    if (S.planLock && dAdd(0) <= S.planLock.until) { S.planLock.until = shiftIsoDate(S.planLock.until, 7); store.set('planLock', S.planLock); } // la semana de descarga no consume el bloque
+    toast('🌿 Descarga activa: 1 semana');
+  },
+  deloadskip() { S.deloadSkip = dAdd(7); store.set('deloadSkip', S.deloadSkip); },
   rest30() { S.rest += 3e4; }, restoff() { S.rest = 0; S.restWhy = ''; },
   style(d) { S.style = d.k; store.set('style', d.k); S.nutritionPreferences = { ...S.nutritionPreferences, style: d.k }; store.set('nutritionPreferences', S.nutritionPreferences); },
   profile() {
@@ -1264,11 +1346,12 @@ function addMeal(items, text) {
   items.forEach(i => { for (const k in t) t[k] += Math.max(0, +i[k] || 0); });
   for (const k in t) S.macros[k] += Math.round(t[k]);
   S.meals.push({ text, ...t });
+  S.recentMeals = [{ text, k: Math.round(t.k), p: Math.round(t.p), c: Math.round(t.c), f: Math.round(t.f) }, ...S.recentMeals.filter(m => m.text !== text)].slice(0, 3);
   // Si te pasas del presupuesto, el exceso se reparte (≤200 kcal/día, 3 días) para mantener déficit/superávit.
   const done = S.carried[today()] || 0, over = S.macros.k - budget(today()) - done;
   if (over > 0) { const c = E.carry(over); c.forEach((k, i) => addAdj(i + 1, -k)); S.carried[today()] = done + c.reduce((a, b) => a + b, 0);
     S.note = `Te pasaste ${Math.round(over)} kcal: recorto ${c.filter(Boolean).map(x => -x).join(' / ')} kcal los próximos días.`; }
-  persist('macros', 'meals', 'adj', 'carried');
+  persist('macros', 'meals', 'adj', 'carried', 'recentMeals');
 }
 
 function parseTrainingRequest(text) {
@@ -1549,7 +1632,7 @@ async function authAction(fn, isSignup) {
 document.addEventListener('click', async e => {
   const el = e.target.closest('[data-act]'); if (!el) return;
   const f = ACT[el.dataset.act]; if (!f) return;
-  await f(el.dataset);
+  await f(el.dataset); restSync();
   if (S.screen === 'app') render();
 });
 document.addEventListener('keydown', e => {
@@ -1571,5 +1654,6 @@ if (CONFIG_OK) {
   let lastCheck = Date.now(); // re-verifica la licencia al volver a la app (>5 min)
   document.addEventListener('visibilitychange', () => { if (!document.hidden && S.user && Date.now() - lastCheck > 3e5) { lastCheck = Date.now(); gate({ user: S.user }); } });
 } else { gate(); }
+maybeTitan();
 render();
 window.__ok = 1;
