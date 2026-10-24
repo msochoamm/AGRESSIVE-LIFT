@@ -6,7 +6,7 @@ import * as N from './nutrition.js';
 
 /* ---------- Utilidades y persistencia local ---------- */
 const $ = s => document.querySelector(s);
-const VERSION = 'v19';
+const VERSION = 'v20';
 const esc = t => String(t).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 await hydrate(); // IndexedDB → caché en memoria
 const today = () => new Date().toISOString().slice(0, 10);
@@ -177,7 +177,7 @@ const S = {
   trainingPlan: savedTrainingPlan,
   trainingSchedule: savedTrainingSchedule || DEFAULT_TRAINING_SCHEDULE,
   trainingConfigured: savedTrainingConfigured,
-  planLock: store.get('planLock', null), dietLock: store.get('dietLock', null),
+  planLock: store.get('planLock', null), coachPending: store.get('coachPending', null), dietLock: store.get('dietLock', null),
   onboarded: store.get('onboarded', savedTrainingConfigured),
   trainingPreferences: store.get('trainingPreferences', {}),
   trainingSectionTab: 'routine',
@@ -357,29 +357,82 @@ const mondayOf = iso => {
   date.setUTCDate(date.getUTCDate() - ((date.getUTCDay() + 6) % 7));
   return isoDate(date);
 };
-function routineSessionForDate(iso) {
-  const schedule = S.trainingSchedule || DEFAULT_TRAINING_SCHEDULE;
+function rawSessionIndex(iso, schedule) {
   const start = schedule.startDate || today();
   const elapsed = Math.floor((Date.parse(`${iso}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 864e5);
-  if (elapsed < 0 || !S.trainingPlan.length) return null;
-  let sessionIndex;
+  if (elapsed < 0) return null;
   if (schedule.cycle) {
     const workDays = Number(schedule.workDays) || schedule.days;
     const cycleLength = Math.max(1, workDays + (Number(schedule.restDays) || 0));
     const position = elapsed % cycleLength;
     if (position >= workDays) return null;
-    sessionIndex = Math.floor(elapsed / cycleLength) * workDays + position;
-  } else {
-    const weekdays = schedule.weekdays || DEFAULT_TRAINING_SCHEDULE.weekdays;
-    const weekday = new Date(`${iso}T00:00:00Z`).getUTCDay();
-    const sessionPosition = weekdays.indexOf(weekday);
-    if (sessionPosition < 0) return null;
-    const weeksElapsed = Math.floor((Date.parse(`${mondayOf(iso)}T00:00:00Z`) - Date.parse(`${mondayOf(start)}T00:00:00Z`)) / (7 * 864e5));
-    sessionIndex = weeksElapsed * weekdays.length + sessionPosition;
+    return Math.floor(elapsed / cycleLength) * workDays + position;
   }
-  const index = sessionIndex % S.trainingPlan.length;
+  const weekdays = schedule.weekdays || DEFAULT_TRAINING_SCHEDULE.weekdays;
+  const sessionPosition = weekdays.indexOf(new Date(`${iso}T00:00:00Z`).getUTCDay());
+  if (sessionPosition < 0) return null;
+  const weeksElapsed = Math.floor((Date.parse(`${mondayOf(iso)}T00:00:00Z`) - Date.parse(`${mondayOf(start)}T00:00:00Z`)) / (7 * 864e5));
+  return weeksElapsed * weekdays.length + sessionPosition;
+}
+function routineSessionForDate(iso) {
+  const schedule = S.trainingSchedule || DEFAULT_TRAINING_SCHEDULE;
+  if (!S.trainingPlan.length) return null;
+  const raw = rawSessionIndex(iso, schedule); if (raw === null) return null;
+  const index = (raw + (schedule.offset || 0)) % S.trainingPlan.length;
   return { ...S.trainingPlan[index], index };
 }
+/* ---------- Organización por fechas: último entrenamiento + días de la semana ---------- */
+const NUMW = { un: 1, una: 1, uno: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5 };
+const WD = { domingo: 0, lunes: 1, martes: 2, miercoles: 3, jueves: 4, viernes: 5, sabado: 6 };
+const WDN = Object.keys(WD).join('|');
+const monFirst = d => (d + 6) % 7;
+function parseLastWorkout(t) {
+  const none = /\b(nunca|no he entrenado|sin entrenar|empiezo de cero|empezando de cero|primera vez|aun no entreno)\b|llevo\s+(?:\w+\s+){0,2}(?:semanas|meses)\s+sin|hace\s+(?:varias\s+|unas\s+)?(?:semanas|meses)\s+que\s+no/.test(t);
+  const past = /(hice|hizo|entrene|entrenaba|toco|trabaje|ultim[oa]|fue)/.test(t);
+  let date = '', wd = null;
+  if (/\bhoy\b/.test(t) && past) date = today();
+  else if (/\banteayer\b|\bantier\b/.test(t)) date = shiftIsoDate(today(), -2);
+  else if (/\bayer\b/.test(t)) date = shiftIsoDate(today(), -1);
+  else {
+    const m = /hace\s+(\d{1,2}|un|dos|tres|cuatro|cinco)\s+dias?/.exec(t);
+    if (m) date = shiftIsoDate(today(), -(Number(m[1]) || NUMW[m[1]]));
+    else {
+      const w = new RegExp(`(?:el\\s+)?(${WDN})\\b[^.,;]{0,30}\\b(?:hice|entrene|toco|trabaje|fue)\\b|\\b(?:hice|entrene|toco|trabaje|fue|ultimo)\\b[^.,;]{0,30}\\b(${WDN})\\b`).exec(t);
+      if (w) { wd = WD[w[1] || w[2]]; const back = ((new Date().getDay() - wd + 7) % 7) || 7; date = shiftIsoDate(today(), -back); }
+    }
+  }
+  let focus = '';
+  if (date || past) {
+    if (/full\s*body|cuerpo completo/.test(t)) focus = 'full';
+    else if (/pecho/.test(t) && /espalda/.test(t) || /torso|tren superior|upper/.test(t)) focus = 'torso';
+    else if (/pierna|cuadricep|gluteo|femoral|sentadilla|\blegs?\b/.test(t)) focus = 'legs';
+    else if (/espalda|biceps|jalon|\bremo\b|\bpull\b|traccion/.test(t)) focus = 'pull';
+    else if (/pecho|hombro|triceps|\bpush\b|empuje|\bpress\b/.test(t)) focus = 'push';
+  }
+  return { none, date, focus, wd };
+}
+function parseWeekdays(t, exclude = null) {
+  const found = new Set();
+  const range = new RegExp(`(${WDN})\\s+a\\s+(${WDN})`).exec(t);
+  if (range) { for (let d = monFirst(WD[range[1]]); d <= monFirst(WD[range[2]]); d++) found.add((d + 1) % 7); }
+  else for (const [k, v] of Object.entries(WD)) if (new RegExp(`\\b${k}s?\\b`).test(t)) found.add(v);
+  if (exclude !== null && exclude !== undefined) found.delete(exclude);
+  return [...found].sort((x, y) => monFirst(x) - monFirst(y));
+}
+const FOCUS_RX = { push: /push|torso/i, pull: /pull|torso/i, legs: /legs|pierna/i, torso: /torso/i, full: /completo/i };
+const FOCUS_TXT = { push: 'empuje (pecho/hombro/tríceps)', pull: 'tracción (espalda/bíceps)', legs: 'pierna', torso: 'torso', full: 'cuerpo completo' };
+const nextAfter = focus => { const i = S.trainingPlan.findIndex(d => FOCUS_RX[focus]?.test(d.day)); return i < 0 ? 0 : (i + 1) % S.trainingPlan.length; };
+function alignSchedule(sch, nextIdx) {
+  sch.offset = 0; const n = S.trainingPlan.length || 1;
+  for (let i = 0; i < 14; i++) { const iso = shiftIsoDate(sch.startDate, i), raw = rawSessionIndex(iso, sch);
+    if (raw !== null) { sch.offset = (((nextIdx - raw) % n) + n) % n; return iso; } }
+  return sch.startDate;
+}
+const calPreview = () => { const D = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'], out = [];
+  for (let i = 0; i < 14; i++) { const iso = shiftIsoDate(today(), i), ses = routineSessionForDate(iso), d = new Date(iso + 'T12:00:00');
+    out.push(`${D[d.getDay()]} ${d.getDate()}/${d.getMonth() + 1}: ${ses ? `${ses.day} — ${String(ses.focus).split(' · ')[0]}` : 'descanso'}`); }
+  return out.join('\n'); };
+const INTAKE_Q = needDays => `Antes de armar y bloquear tu rutina necesito saber dónde empezar:\n1️⃣ ¿Cuál fue tu último entrenamiento (qué día y qué músculos o qué hiciste)? Ej: «ayer pierna», «el lunes hice espalda» o «llevo semanas sin entrenar».${needDays ? '\n2️⃣ ¿Qué días de la semana vas a entrenar? Ej: «lunes, martes, jueves y sábado» (o dime si prefieres ciclo, por ejemplo 3 días entrenando y 1 de descanso).' : ''}`;
 const routineExercisesForDate = iso => S.routineEdits[iso] || [];
 
 const dayState = iso => {
@@ -426,6 +479,7 @@ const nutritionCoachCard = () => {
   </div>
   ${!ok ? `<div class="nutri-next mt-3">👉 ${esc(N.askFor(miss[0]))}</div>` : ''}
   <div class="quick-prompts">
+    <button class="chip" data-act="nutritionprompt" data-msg="Organízame la semana: qué compro, qué cocino y cuándo, cómo lo porciono y cómo lo recalentamos">👩‍🍳 Organízame la semana</button>
     <button class="chip" data-act="nutritionprompt" data-msg="Tengo pollo y arroz, ¿qué preparo?">Pollo y arroz</button>
     <button class="chip" data-act="nutritionprompt" data-msg="Dame una cena alta en proteína">Cena alta en proteína</button>
     <button class="chip" data-act="nutritionprompt" data-msg="¿Qué opción me conviene según mis macros restantes?">Según mis macros</button>
@@ -454,6 +508,7 @@ const planCards = () => {
   const prefs = S.nutritionPreferences, t = nutritionTarget(), menu = currentMenu(), day = Math.min(S.menuDay, 6), meals = menu.days[day] || [];
   const DN = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'], tot = meals.reduce((a, m) => ({ k: a.k + m.k, p: a.p + m.p, c: a.c + m.c, f: a.f + m.f }), { k: 0, p: 0, c: 0, f: 0 });
   const strat = N.strategy({ target: t, prefs, goal: S.profile?.goal || 'maint', trainDays: S.trainingSchedule?.days || 3 }), groc = N.groceries(menu);
+  const cookHtml = N.cookPlan(menu, prefs).map(b => `<div class="mt-2"><div class="neon text-sm font-bold">${esc(b.day)} · ${esc(b.title)}</div><ul class="strat">${b.tasks.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>`).join('');
   const GL = { prot: 'Proteínas', supp: 'Suplementos', dairy: 'Lácteos', carb: 'Carbohidratos', veg: 'Verduras', fat: 'Grasas' };
   return `<div class="card on"><div class="font-bold text-lg">🎯 Tu estrategia</div><div class="text-xs text-zinc-500 mb-1">Hecha con tus respuestas · ${t.kcal} kcal · P ${t.p} · C ${t.c} · G ${t.f}</div>
     <ul class="strat">${strat.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>
@@ -466,6 +521,7 @@ const planCards = () => {
     <div class="text-xs text-zinc-400 mt-2">Día: <b class="text-white">${tot.k}</b> kcal · P ${tot.p} · C ${tot.c} · G ${tot.f} <span class="text-zinc-500">(meta ${t.kcal} · P ${t.p} · C ${t.c} · G ${t.f})</span></div>
     ${menu.notes.map(n => `<div class="text-xs text-zinc-500 mt-1">ℹ️ ${esc(n)}</div>`).join('')}
     ${menu.prep.length ? `<details class="mt-2"><summary class="text-sm" style="min-height:40px;display:flex;align-items:center">🧊 Qué preparar en la nevera</summary><ul class="strat">${menu.prep.map(x => `<li>${esc(x)}</li>`).join('')}</ul><div class="text-xs text-zinc-500">Cocina por lotes (domingo y miércoles). Dura 3–4 días en nevera; congela el resto.</div></details>` : ''}</div>
+  <div class="card"><details open><summary class="font-bold text-lg" style="min-height:40px;display:flex;align-items:center">👩‍🍳 Cómo organizar y cocinar la semana</summary>${cookHtml}</details></div>
   <div class="card"><details><summary class="font-bold text-lg" style="min-height:40px;display:flex;align-items:center">🛒 Lista de compras (7 días)</summary>
     <div class="text-xs text-zinc-500 mb-1">Pesos crudos aproximados para 1 persona.</div>
     ${Object.keys(GL).map(g => { const l = groc.filter(x => x.group === g); return l.length ? `<div class="text-xs neon uppercase mt-2">${GL[g]}</div>${l.map(x => `<div class="ctl-row"><span>${esc(x.n)}${x.tier === 1 ? ' <span class="text-xs text-zinc-500">· económico</span>' : ''}</span><b>${x.amount}</b></div>`).join('')}` : ''; }).join('')}</details></div>
@@ -913,7 +969,7 @@ const ACT = {
     render();
   },
   recheck() { return gate({ user: S.user }); },
-  resetplan() { if (!confirm('¿Reiniciar el plan de entrenamiento? Solo para pruebas: se quita el bloqueo y podrás crear una rutina nueva.')) return; S.planLock = null; store.set('planLock', null); toast('Plan desbloqueado'); },
+  resetplan() { if (!confirm('¿Reiniciar el plan de entrenamiento? Solo para pruebas: se quita el bloqueo y podrás crear una rutina nueva.')) return; S.planLock = null; S.coachPending = null; store.set('planLock', null); store.set('coachPending', null); toast('Plan desbloqueado'); },
   dietreset() { if (!confirm('¿Reiniciar la dieta? Solo para pruebas: se borra el bloqueo y tus macros calculados.')) return; S.dietLock = null; S.target = null; S.profile = null; store.set('dietLock', null); persist('profile', 'target'); toast('Dieta reiniciada'); },
   aikey() {
     const k = prompt(hasAiKey() ? 'Ya hay una clave guardada. Pega una nueva, o deja vacío y acepta para BORRARLA:' : 'Pega tu clave de OpenAI (empieza con sk-). Se guarda solo en este dispositivo:');
@@ -1080,7 +1136,7 @@ const ACT = {
       try {
         const result = await ai('coach', { task: 'nutrition',
           systemPrompt: 'Eres el coach de nutrición de AGRESSIVE LIFT. Pregunta por hábitos, preferencias, restricciones, corrientazos y estilo de cocina. Adapta cada recomendación al mensaje actual, preferencias guardadas y macros restantes; evita respuestas genéricas repetidas. No inventes macros exactos sin cantidades.',
-          question: text, recentMessages: S.nutritionChat.slice(-8), goalGuide: S.trainingPreferences.goal && GOALS[S.trainingPreferences.goal] ? { goal: S.trainingPreferences.goal, nutri: GOALS[S.trainingPreferences.goal].nutri } : null, missing: N.missing(S.nutritionPreferences, !!S.target), target: nutritionTarget(), preferences: S.nutritionPreferences, conversation: S.nutritionChat.slice(-8),
+          question: text, recentMessages: S.nutritionChat.slice(-8), cocina: (() => { try { return S.target ? N.cookPlan(currentMenu(), S.nutritionPreferences).map(b => `${b.day} (${b.title}): ${b.tasks.join(' ')}`) : null; } catch { return null; } })(), horarioTrain: S.trainingSchedule ? { dias: S.trainingSchedule.weekdays, ultimo: S.trainingPreferences.lastWorkout || null } : null, goalGuide: S.trainingPreferences.goal && GOALS[S.trainingPreferences.goal] ? { goal: S.trainingPreferences.goal, nutri: GOALS[S.trainingPreferences.goal].nutri } : null, missing: N.missing(S.nutritionPreferences, !!S.target), target: nutritionTarget(), preferences: S.nutritionPreferences, conversation: S.nutritionChat.slice(-8),
           remaining: { kcal: remaining.kcal - S.macros.k, protein: remaining.p - S.macros.p,
             carbs: remaining.c - S.macros.c, fat: remaining.f - S.macros.f },
           style: STYLES[S.style][0], meals: S.meals.slice(-3).map(meal => meal.text) });
@@ -1180,23 +1236,24 @@ function parseTrainingRequest(text) {
   if (/\btorso\s*(?:\/|y|[-])\s*pierna|\bupper\s*\/\s*lower\b|\btren superior\b|\btren inferior\b/.test(t)) split = 'Torso/Pierna';
   else if (/\bppl\b|\bpush\b|\bpull\b|\blegs\b|\bempuje\b|\btraccion\b/.test(t)) split = 'Push/Pull/Legs';
   else if (/full\s*body|cuerpo completo|cuerpo entero/.test(t)) split = 'Full Body';
-  const days = daysMatch ? Number(daysMatch[1]) || numberWords[daysMatch[1]]
+  const lwx = parseLastWorkout(t), named = parseWeekdays(t, lwx.wd), useNamed = named.length >= 2 && !restMatch;
+  const days = useNamed ? named.length : daysMatch ? Number(daysMatch[1]) || numberWords[daysMatch[1]]
     : split === 'Torso/Pierna' ? 4 : split === 'Full Body' ? 3 : S.trainingSchedule.days;
-  const explicit = !!daysMatch || !!split;
+  const explicit = !!daysMatch || !!split || useNamed;
   if (!explicit) return null;
   const cycle = !!restMatch;
   const restDays = cycle ? Number(restMatch[1]) || numberWords[restMatch[1]] || 1 : 7 - days;
   const schedule = {
     days, split: split || S.trainingSchedule.split || 'Push/Pull/Legs', cycle,
     workDays: days, restDays: Math.max(0, restDays), startDate: today(),
-    weekdays: days === 1 ? [1] : days === 2 ? [1, 4] : days === 3 ? [1, 3, 5]
+    named: useNamed, weekdays: useNamed ? named : days === 1 ? [1] : days === 2 ? [1, 4] : days === 3 ? [1, 3, 5]
       : days === 4 ? [1, 2, 4, 6] : days === 5 ? [1, 2, 3, 5, 6] : days === 6 ? [1, 2, 3, 4, 5, 6] : [0, 1, 2, 3, 4, 5, 6],
   };
   const goal = /fuerza|potencia/.test(t) ? 'fuerza' : /definicion|\bcut\b|cutting|bajar grasa|perder grasa|quemar grasa|secar|perder peso|bajar de peso/.test(t) ? 'definición' : /hipertrof|masa|musculo|\bbulk|(?:fase|etapa|ciclo)\s+de\s+volumen|(?:hacer|hago|quiero|en)\s+volumen|subir de peso|aumentar peso/.test(t) ? 'hipertrofia' : '';
   const level = /principiante|novato/.test(t) ? 'principiante' : /intermedio/.test(t) ? 'intermedio' : /avanzado/.test(t) ? 'avanzado' : '';
   if (goal) S.trainingPreferences.goal = goal;
   if (level) S.trainingPreferences.level = level;
-  return { days, split: schedule.split, cycle, restDays: schedule.restDays, schedule, goal, level };
+  return { days, split: schedule.split, cycle, restDays: schedule.restDays, schedule, goal, level, lw: lwx };
 }
 
 function buildTrainingPlan(text, request = parseTrainingRequest(text)) {
@@ -1303,10 +1360,36 @@ async function sendCoachMessage(text) {
   if (dur) S.trainingPreferences.duration = dur[0];
   store.set('trainingPreferences', S.trainingPreferences);
   let request = parseTrainingRequest(text);
+  const lwNow = parseLastWorkout(normalized), known = l => !!(l && (l.none || l.date || l.focus));
+  let intake = false, finalLw = null, needDays = false;
+  if (!locked) {
+    const pend = S.coachPending;
+    if (request) {
+      if (known(lwNow) || (pend && pend.tries >= 1)) finalLw = known(lwNow) ? lwNow : { none: true };
+      else { intake = true; needDays = !request.schedule.named && !request.schedule.cycle; S.coachPending = { request, tries: pend ? pend.tries + 1 : 0 }; }
+    } else if (pend) {
+      const nm = parseWeekdays(normalized, lwNow.wd), sch = pend.request.schedule;
+      if (nm.length >= 2 && !sch.cycle) { Object.assign(sch, { days: nm.length, workDays: nm.length, weekdays: nm, named: true }); pend.request.days = nm.length; }
+      if (known(lwNow) || pend.tries >= 1) { request = pend.request; finalLw = known(lwNow) ? lwNow : { none: true }; }
+      else { intake = true; needDays = !sch.named && !sch.cycle; S.coachPending = { ...pend, tries: pend.tries + 1 }; }
+    }
+    if (intake) request = null;
+    if (finalLw) S.coachPending = null;
+    store.set('coachPending', S.coachPending);
+  }
   const lockedAttempt = locked && !!request; // pidió cambiar el plan estando bloqueado
   if (locked) { S.trainingPreferences.goal = prefsBefore.goal; S.trainingPreferences.level = prefsBefore.level; request = null; }
   const previousReply = [...S.coachChat].reverse().find(message => message.role === 'assistant')?.text;
-  let reply = lockedAttempt ? lockMsg() : coachReply(text, request);
+  let reply = lockedAttempt ? lockMsg() : intake ? INTAKE_Q(needDays) : coachReply(text, request);
+  let startNote = '';
+  if (request && finalLw) {
+    const sch = S.trainingSchedule; sch.startDate = finalLw.date === today() ? shiftIsoDate(today(), 1) : today();
+    const firstIso = alignSchedule(sch, finalLw.focus ? nextAfter(finalLw.focus) : 0), first = routineSessionForDate(firstIso);
+    S.trainingPreferences.lastWorkout = { date: finalLw.date || '', focus: finalLw.focus || '', none: !!finalLw.none };
+    const lwTxt = finalLw.none ? 'llevas un tiempo sin entrenar' : `${finalLw.date ? fmtLong(finalLw.date) + ' · ' : ''}${FOCUS_TXT[finalLw.focus] || 'entrenamiento'}`;
+    startNote = `📅 Tu último entrenamiento: ${lwTxt}. Empiezas el ${fmtLong(firstIso)}${first ? ' con ' + first.day : ''} y de ahí se arma todo el calendario:\n${calPreview()}`;
+    reply += '\n\n' + startNote;
+  }
   if (request) { S.planLock = makeLock(); store.set('planLock', S.planLock); reply += '\n\n' + goalNote(S.planLock.goal) + '\n\n' + lockMsg(true); }
   if (!(AI_ON || CONFIG_OK) && reply === previousReply && !request) {
     reply = `Sigo con tu esquema de ${S.trainingSchedule.days} días · ${S.trainingSchedule.split}. Dime qué detalle quieres ajustar y cambio ese punto.`;
@@ -1337,12 +1420,14 @@ async function sendCoachMessage(text) {
         task: 'training', planLock: planLockActive() ? S.planLock : null, goalGuide: { goal: goalKey(), ...GOALS[goalKey()] }, systemPrompt: TRAINER_SYSTEM_PROMPT, currentMessage: text,
         schedule: S.trainingSchedule, trainingPlan: S.trainingPlan, preferences: S.trainingPreferences,
         recentMessages: S.coachChat.slice(-8),
-        instruccion: request ? 'El usuario acaba de pedir un plan NUEVO y la app ya lo generó (ver trainingPlan). Explica en 4-6 líneas por qué esta estructura y estos rangos sirven para su objetivo y nivel, cómo progresar y cuándo comer/dormir alrededor del entreno. NO listes los ejercicios: la app los muestra debajo.'
+        intake, lastWorkout: S.trainingPreferences.lastWorkout || null, weekdays: S.trainingSchedule?.weekdays,
+        instruccion: intake ? 'INTAKE: antes de crear y bloquear el plan, pregunta con tus palabras y de forma breve: 1) cuándo fue su último entrenamiento y qué músculos o ejercicios hizo (o si lleva tiempo sin entrenar)' + (needDays ? ' y 2) qué días de la semana va a entrenar (o si prefiere un ciclo, p. ej. 3 días entrenando y 1 de descanso)' : '') + '. NO armes la rutina todavía.'
+          : request ? 'El usuario acaba de pedir un plan NUEVO y la app ya lo generó (ver trainingPlan). Menciona dónde empieza (según su último entrenamiento y sus días) y que el calendario de abajo ya tiene las fechas. Explica en 4-6 líneas por qué esta estructura y estos rangos sirven para su objetivo y nivel, cómo progresar y cuándo comer/dormir alrededor del entreno. NO listes los ejercicios: la app los muestra debajo.'
           : lockedAttempt ? 'El usuario intenta cambiar el plan pero está BLOQUEADO (planLock). Explica con amabilidad por qué no se cambia, responde su duda y ofrece solo ajustes de carga, técnica, descanso o recuperación.'
           : 'Responde lo que preguntó el usuario usando su plan y objetivo actuales.',
       });
       let out = String(result.note || '').trim() || reply;
-      if (request) out += '\n\n📋 TU RUTINA:\n\n' + planDetails() + '\n\n' + goalNote(S.planLock.goal) + '\n\n' + lockMsg(true);
+      if (request) out += '\n\n📋 TU RUTINA:\n\n' + planDetails() + (startNote ? '\n\n' + startNote : '') + '\n\n' + goalNote(S.planLock.goal) + '\n\n' + lockMsg(true);
       else if (lockedAttempt) out += `\n\n🔒 Plan bloqueado hasta el ${fmtLong(S.planLock.until)}.`;
       S.coachChat[S.coachChat.length - 1] = { role: 'assistant', text: out };
       S.note = out;

@@ -3,6 +3,30 @@
 
 /* ---------- Alimentos (por 100 g, peso cocido salvo avena/whey) ---------- */
 // tier de costo en Colombia: 1 barato · 2 medio · 3 caro. raw = factor cocido→crudo para la lista de compras.
+
+/** Plan de cocina: qué comprar/cocinar y cuándo (batch cooking), cómo porcionar y recalentar. */
+export function cookPlan(menu, prefs = {}) {
+  const block = (from, to) => { const tot = {}, ids = new Set();
+    for (let d = from; d <= to; d++) (menu.days[d] || []).forEach(m => { ids.add(m.id); if (m.prep === 'fuera') return; m.items.forEach(it => { if (FOODS[it.id]) tot[it.id] = (tot[it.id] || 0) + it.g * (FOODS[it.id].raw || 1); }); });
+    return { tot, ids }; };
+  const list = (tot, kind) => Object.entries(tot).filter(([id]) => FOODS[id].kind === kind).map(([id, g]) => `${FOODS[id].n.toLowerCase()} ${Math.round(g / 10) * 10} g`);
+  const tasks = (from, to, label) => { const { tot, ids } = block(from, to), t = [], n = to - from + 1;
+    const prot = list(tot, 'prot').filter(x => !/huevo|cocid/.test(x)), carb = [...list(tot, 'carb'), ...list(tot, 'prot')].filter(x => /cocid/.test(x));
+    const veg = list(tot, 'veg');
+    if (prot.length) t.push(`🍗 Proteínas (peso crudo): ${prot.join(', ')}. Sazona con sal, ajo y pimienta, cocina hasta que estén bien cocidas y porciona en ${n} recipientes (uno por comida).`);
+    if (carb.length) t.push(`🍚 Carbohidratos y legumbres (peso ya cocido): ${carb.join(', ')}. Cocínalos juntos y guárdalos en recipientes aparte de la proteína para que no se pongan blandos.`);
+    if (veg.length) t.push(`🥦 Verduras: ${veg.join(', ')}. Lávalas y córtalas; saltéalas 4-5 min el mismo día de comerlas o déjalas listas crudas.`);
+    if (tot.huevo) t.push(`🥚 Hierve ${Math.ceil(tot.huevo / 50 / 1.0)} huevos duros (10 min) para desayunos y snacks.`);
+    if ([...ids].some(i => /d-oats/.test(i))) t.push('🥣 Avena de frasco: prepárala la noche anterior (avena + leche + whey + banano).');
+    t.push(`📦 Etiqueta cada recipiente con el día (${label}) y guarda lo de los 2 primeros días en la nevera; lo demás, en el congelador si dura más de 3-4 días.`);
+    return t; };
+  return [
+    { day: 'Domingo', title: 'Compra y cocina por lotes (Lun–Jue)', tasks: ['🛒 Haz la compra con la lista de la semana (revisa la pestaña "Lista de compras").', ...tasks(0, 3, 'Lun–Jue'), '⏱ Calcula 60-90 min de cocina con todo en paralelo: arroz/papa al fuego, proteína en sartén u horno y verduras al final.'] },
+    { day: 'Miércoles', title: 'Reposición (Vie–Dom)', tasks: tasks(4, 6, 'Vie–Dom') },
+    { day: 'Cada día', title: 'Rutina diaria (5 min)', tasks: ['🌙 La noche anterior: pasa de la nevera a la mesa lo del día siguiente y deja lista la ropa/bolso de entreno.', '⏰ Pon una alarma por cada comida con la hora del menú.', '🔥 Recalienta 2 min en microondas o sartén (proteína un poco más de tiempo), suma la verdura fresca y a comer.', (prefs.cook === 'poco' || prefs.time === 'poco') ? '⚡ Si hoy no hay tiempo: usa las comidas de 1-5 min (yogur, huevos duros, arepa con atún) y no te saltes la proteína.' : '⚡ Si un día se complica, usa las comidas rápidas del menú (1-5 min) y no te saltes la proteína.'] },
+  ];
+}
+
 export const FOODS = {
   muslo: { n: 'Muslo de pollo sin piel', s: 'muslo de pollo', k: 179, p: 25, c: 0, f: 8, tier: 1, raw: 1.3, kind: 'prot' },
   pechuga: { n: 'Pechuga de pollo', s: 'pechuga', k: 165, p: 31, c: 0, f: 3.6, tier: 2, raw: 1.3, kind: 'prot' },

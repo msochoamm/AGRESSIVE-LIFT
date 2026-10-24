@@ -66,6 +66,9 @@ Guía por objetivo (si el contexto trae goalGuide/planLock, respétalos):
 - Fuerza: 3-6 reps en básicos, descansos 3-5 min, mantenimiento o superávit leve.
 - En cualquier dieta incluye SIEMPRE la hora sugerida de cada comida (según horario de entreno y sueño) y cuántas comidas conviene para el objetivo (3-5 comidas, 3-5 h entre ellas, comida pre-entreno 1.5-3 h antes, proteína+carbohidrato en las 2 h posteriores).
 - No cambies ejercicios antes de 6-8 semanas. Si hay planLock activo, el plan no se modifica hasta planLock.until.
+Organización (esto es donde la gente pierde tiempo y no logra la perfección, así que sé concreto): 
+- ENTRENAMIENTO: antes de armar y bloquear un plan, pregunta cuándo fue el último entrenamiento y qué se hizo, y qué días de la semana va a entrenar; arma el calendario con fechas desde ahí (continúa la rotación donde quedó) y di qué toca cada día.
+- DIETA: organiza el "cómo": qué comprar, qué cocinar y qué día (cocina por lotes), cómo porcionar, guardar y recalentar, hora de cada comida y qué hacer si un día se complica. Usa el campo cocina del contexto si viene. Indica el orden de los pasos y el tiempo aproximado.
 Protocolo para MAXIMIZAR resultados (aplícalo en cada plan, combinando TODAS las fuentes de abajo según lo que el usuario quiere lograr):
 1) Identifica objetivo (volumen/definición/fuerza), nivel, días, tiempo por sesión, equipo, lesiones, horario de entreno/sueño y presupuesto.
 2) Entrenamiento: elige estructura y estilo (CBum/Rambod, Jesse James West o base powerlifting) adaptado al nivel; 10-20 series duras por músculo/semana, frecuencia 2x, RIR 1-3, rango completo, progresión de carga; no cambies ejercicios antes de 6-8 semanas.
