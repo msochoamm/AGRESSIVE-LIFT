@@ -1093,7 +1093,7 @@ function render() {
   if (S.screen === 'app') syncHist();
   const html = S.screen === 'boot' ? '<div class="pt-48 text-center neon text-xl">Verificando licencia…</div>'
     : S.screen === 'auth' ? authView() : S.screen === 'locked' ? lockedView()
-    : !S.onboarded ? onboardingView() + (S.toast ? `<div class="toast">${esc(S.toast)}</div>` : '')
+    : !S.onboarded ? onboardingView() + sheet() + (S.toast ? `<div class="toast">${esc(S.toast)}</div>` : '')
     : header() + (S.view === 'train' ? trainView() : S.view === 'food' ? foodView() : S.view === 'control' ? controlView() : mapView()) + sheet() + restBar() + (S.toast ? `<div class="toast">${esc(S.toast)}</div>` : '');
   const t = document.createElement('div'); t.innerHTML = html; morph($('#app'), t); wake();
 }
@@ -1506,7 +1506,8 @@ function coachReply(text, request = parseTrainingRequest(text)) {
   if (!S.trainingConfigured) {
     const p = S.trainingPreferences;
     const known = [p.goal && `objetivo ${p.goal}`, p.level && `nivel ${p.level}`, p.place && `entrenas en ${p.place}`, p.duration && `sesión de ${p.duration}`, p.injuries && (p.injuries === 'ninguna' ? 'sin lesiones' : 'molestias anotadas')].filter(Boolean).join(' · ');
-    const missing = [!p.goal && 'tu objetivo (hipertrofia, fuerza o definición)', !p.level && 'tu nivel (principiante, intermedio o avanzado)', 'cuántos días entrenas y cuántos descansas, y la división (PPL, torso/pierna o full body)', !p.injuries && 'si tienes alguna lesión o molestia'].filter(Boolean);
+    const req = request || S.coachPending?.request;
+    const missing = [!p.goal && 'tu objetivo (hipertrofia, fuerza o definición)', !p.level && 'tu nivel (principiante, intermedio o avanzado)', !req && 'cuántos días entrenas y cuántos descansas, y la división (PPL, torso/pierna o full body)', !p.injuries && 'si tienes alguna lesión o molestia'].filter(Boolean);
     return `${known ? `Anotado: ${known}. ` : ''}Para diseñar tu rutina aún necesito: ${missing.join('; ')}.`;
   }
   const schedule = `${S.trainingSchedule.days} días · ${S.trainingSchedule.split}`;
