@@ -3,11 +3,10 @@ import { CONFIG_OK, AI_ON, hasAiKey, setAiKey, LOCAL_MODE, AUTH_MISCONFIGURED, s
 import { hydrate, store, profile, PROFILES } from './store.js';
 import * as E from './engine.js';
 import * as N from './nutrition.js';
-import { buildMonthPdf } from './pdf.js';
 
 /* ---------- Utilidades y persistencia local ---------- */
 const $ = s => document.querySelector(s);
-const VERSION = 'v27';
+const VERSION = 'v28';
 const esc = t => String(t).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 await hydrate(); // IndexedDB → caché en memoria
 const localIso = t => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
@@ -652,7 +651,7 @@ const weekBanner = () => { const k = mondayOf(today()); if (!S.menuWeekSeen) { S
   return S.menuWeekSeen === k ? '' : `<div class="card on banner"><div class="font-bold">🔄 ¡Nueva semana, nuevo menú!</div><div class="text-sm text-zinc-400 mt-1">Cambié recetas y proteínas de esta semana (siempre con tus macros) y actualicé la lista de compras y la cocina del domingo.</div><button class="btn fill w-full mt-2" data-act="weekseen">Entendido</button></div>`; };
 const MONTHS = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
 const pdfCard = () => { if (!S.target || !N.ready(S.nutritionPreferences, true)) return ''; const done = S.pdfMonth === today().slice(0, 7), mes = MONTHS[+today().slice(5, 7) - 1];
-  return `<div class="card ${done ? '' : 'on'} pdfcard"><div class="flex justify-between items-center gap-2"><div class="min-w-0"><div class="font-bold">📄 Plan de ${mes} en PDF</div><div class="text-xs text-zinc-400 mt-1">${done ? 'Ya lo descargaste este mes. El del próximo mes aparece aquí solo.' : '4 semanas de recetas, horarios, entrenos y lista de compras por semana.'}</div></div><button class="btn ${done ? 'ghost' : 'fill'} !px-3" data-act="pdfmonth">${done ? 'Otra vez' : 'Descargar'}</button></div></div>`; };
+  return `<div class="card ${done ? '' : 'on'} pdfcard"><div class="flex justify-between items-center gap-2"><div class="min-w-0"><div class="font-bold">📄 Plan de ${mes} en PDF</div><div class="text-xs text-zinc-400 mt-1">${done ? 'Ya lo descargaste este mes. El del próximo mes aparece aquí solo.' : '4 semanas con comidas distintas cada semana: recetas, horarios, entrenos y lista de compras. Cada mes sale uno nuevo.'}</div></div><button class="btn ${done ? 'ghost' : 'fill'} !px-3" data-act="pdfmonth">${done ? 'Otra vez' : 'Descargar'}</button></div></div>`; };
 const PREPTXT = { nevera: m => `Nevera · ${m} min`, cocinar: m => `Cocinar · ${m} min`, rapido: m => `Rápido · ${m} min`, fuera: () => 'Restaurante' };
 /** Datos del PDF mensual: 4 semanas con menú, horarios, entrenos, compras y cocina. */
 function monthData() {
@@ -686,9 +685,9 @@ const planCards = () => {
   const strat = N.strategy({ target: t, prefs, goal: S.profile?.goal || 'maint', trainDays: S.trainingSchedule?.days || 3 }), groc = N.groceries(menu);
   const cookHtml = N.cookPlan(menu, prefs).map(b => `<div class="mt-2"><div class="neon text-sm font-bold">${esc(b.day)} · ${esc(b.title)}</div><ul class="strat">${b.tasks.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>`).join('');
   const GL = { prot: 'Proteínas', supp: 'Suplementos', dairy: 'Lácteos', carb: 'Carbohidratos', veg: 'Verduras', fat: 'Grasas' };
-  return `<div class="card on"><div class="font-bold text-lg">🎯 Tu estrategia</div><div class="text-xs text-zinc-500 mb-1">Hecha con tus respuestas · ${t.kcal} kcal · P ${t.p} · C ${t.c} · G ${t.f}</div>
+  return `${pdfCard()}<div class="card on"><div class="font-bold text-lg">🎯 Tu estrategia</div><div class="text-xs text-zinc-500 mb-1">Hecha con tus respuestas · ${t.kcal} kcal · P ${t.p} · C ${t.c} · G ${t.f}</div>
     <ul class="strat">${strat.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>
-  ${weekBanner()}${pdfCard()}<div class="card"><div class="flex justify-between items-center gap-2"><div class="font-bold text-lg">🍽️ Menú de la semana</div><button class="chip !px-3" data-act="menuregen">🔄 Otra variante</button></div>
+  ${weekBanner()}<div class="card"><div class="flex justify-between items-center gap-2"><div class="font-bold text-lg">🍽️ Menú de la semana</div><button class="chip !px-3" data-act="menuregen">🔄 Otra variante</button></div>
     <div class="weeknav"><button class="icon-btn" data-act="menuweek" data-n="-1" ${wk <= 0 ? 'disabled' : ''}>‹</button><div class="text-center"><b>${wk === 0 ? 'Esta semana' : wk === 1 ? 'Próxima semana' : `En ${wk} semanas`}</b><div class="text-xs text-zinc-500">${shortDate(menuMonday(wk))} - ${shortDate(shiftIsoDate(menuMonday(wk), 6))} · cambia solo cada lunes</div></div><button class="icon-btn" data-act="menuweek" data-n="1" ${wk >= 3 ? 'disabled' : ''}>›</button></div>
     <div class="daytabs">${DN.map((d, i) => `<button class="chip ${day === i ? 'on' : ''}" data-act="menuday" data-i="${i}">${d}</button>`).join('')}</div>
     ${meals.map((m, i) => `<div class="meal"><div class="flex justify-between items-start gap-2"><div class="min-w-0"><div class="text-xs neon uppercase">${m.slot}${m.time ? ` · 🕗 ${fmtHour(m.time)}` : ''}</div><div class="font-bold leading-tight">${esc(m.name)}</div></div><span class="mealtag">${(PREP[m.prep] || PREP.cocinar)(m.mins)}</span></div>
@@ -1452,7 +1451,7 @@ const ACT = {
     if (d.k === 'style') { S.style = v; store.set('style', v); }
     S.nutritionPreferences = p; store.set('nutritionPreferences', p);
   },
-  nutriplan() { if (N.ready(S.nutritionPreferences, !!S.target)) { S.nutritionSectionTab = 'plan'; toast('✅ Plan nutricional listo'); } },
+  nutriplan() { if (N.ready(S.nutritionPreferences, !!S.target)) { S.nutritionSectionTab = 'plan'; toast('✅ Plan nutricional listo'); if (S.target && S.pdfMonth !== today().slice(0, 7)) ACT.pdfmonth(); } },
   menuday(d) { S.menuDay = +d.i || 0; },
   dietnew() { if (dietLockActive()) return; S.dietLock = null; S.target = null; S.profile = null; store.set('dietLock', null); persist('profile', 'target'); },
   menuregen() { S.menuSeed++; store.set('menuSeed', S.menuSeed); },
@@ -1461,6 +1460,7 @@ const ACT = {
   async pdfmonth() {
     if (!S.target || !N.ready(S.nutritionPreferences, true)) return toast('Primero completa tu plan nutricional');
     try { toast('📄 Generando tu plan del mes…'); render(); await new Promise(r => setTimeout(r, 30));
+      const { buildMonthPdf } = await import('./pdf.js'); // carga diferida: si falla, solo falla el PDF, no la app
       downloadPdf(buildMonthPdf(monthData()), `AGRESSIVE-LIFT-plan-${today().slice(0, 7)}.pdf`);
       S.pdfMonth = today().slice(0, 7); store.set('pdfMonth', S.pdfMonth); toast('✅ PDF descargado: míralo en Descargas');
     } catch (e) { console.error(e); toast('⚠️ No pude crear el PDF: ' + (e.message || e)); }
@@ -2000,3 +2000,4 @@ maybeTitan();
 if (LOCAL_MODE && !hasAiKey() && !store.get('aiAsked') && !S.modal) S.modal = { type: 'aisetup' }; // primer inicio: pedir la clave de IA
 render();
 window.__ok = 1;
+setTimeout(() => import('./pdf.js').catch(() => {}), 1500); // precarga: no bloquea el arranque

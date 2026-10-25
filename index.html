@@ -17,9 +17,10 @@
 <div id="app"><div style="padding:30vh 16px 0;text-align:center;color:#ff2b57;font-size:22px">Cargando…</div></div>
 <script>
 /* Si la app no arranca, muestra el motivo en pantalla en vez de dejarla en negro. */
-function fail(m){if(window.__ok)return;document.getElementById('app').innerHTML='<div style="padding:25vh 16px 0;text-align:center;color:#ff2b57;font-size:22px">No se pudo iniciar<br><small style="color:#a1a1aa;font-size:14px">'+String(m).replace(/</g,'&lt;')+'</small></div>'}
+function repair(){var p=[];try{p.push(navigator.serviceWorker.getRegistrations().then(function(r){return Promise.all(r.map(function(x){return x.unregister()}))}))}catch(e){}try{p.push(caches.keys().then(function(k){return Promise.all(k.map(function(x){return caches.delete(x)}))}))}catch(e){}Promise.all(p).catch(function(){}).then(function(){location.reload()})}
+function fail(m){if(window.__ok)return;document.getElementById('app').innerHTML='<div style="padding:25vh 16px 0;text-align:center;color:#ff2b57;font-size:22px">No se pudo iniciar<br><small style="color:#a1a1aa;font-size:14px">'+String(m).replace(/</g,'&lt;')+'</small><br><button id="fix" style="margin-top:22px;padding:14px 22px;border-radius:14px;border:2px solid #ff2b57;background:#000;color:#fff;font-size:16px;font-weight:900">Reparar y reintentar</button><br><small style="color:#71717a;font-size:12px">Limpia la caché de la app. No borra tus datos.</small></div>';var b=document.getElementById('fix');if(b)b.onclick=repair}
 addEventListener('error',e=>fail(e.message));addEventListener('unhandledrejection',e=>fail(e.reason));
-setTimeout(()=>fail('Tiempo agotado. Revisa que todos los archivos estén en la misma carpeta (app.js, store.js, engine.js, nutrition.js, supabase.js).'),7000);
+setTimeout(()=>fail('Tiempo agotado. Revisa que todos los archivos estén en la misma carpeta (app.js, store.js, engine.js, nutrition.js, supabase.js, pdf.js).'),7000);
 </script>
 <script>
 /* ¿Quién entrena? Se pregunta antes de abrir la app; "Cambiar usuario" vuelve aquí. */

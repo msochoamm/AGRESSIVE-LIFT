@@ -1,13 +1,15 @@
-// SW v26: la app se pide SIEMPRE a la red primero (así ves las actualizaciones al instante) y usa la caché solo sin conexión.
-const C = 'al-v26', SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'engine.js', 'store.js', 'supabase.js', 'nutrition.js', 'manifest.json', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'icon-maskable.png', 'logo.png'];
+// SW v28: la app se pide SIEMPRE a la red primero (así ves las actualizaciones al instante) y usa la caché solo sin conexión.
+const C = 'al-v28', SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'engine.js', 'store.js', 'supabase.js', 'nutrition.js', 'pdf.js', 'manifest.json', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'icon-maskable.png', 'logo.png'];
 const EXT = ['esm.sh', 'raw.githubusercontent.com']; // librería e imágenes de ejercicios: caché primero
-self.addEventListener('install', e => e.waitUntil(caches.open(C).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())));
+// Instalación tolerante: si un archivo falla (404/red), los demás se guardan igual y el SW se instala (con addAll, un solo fallo cancelaba todo).
+self.addEventListener('install', e => e.waitUntil(caches.open(C).then(c => Promise.allSettled(SHELL.map(u => c.add(new Request(u, { cache: 'reload' }))))).then(() => self.skipWaiting())));
 self.addEventListener('activate', e => e.waitUntil(caches.keys().then(k => Promise.all(k.filter(x => x !== C).map(x => caches.delete(x)))).then(() => self.clients.claim())));
 self.addEventListener('fetch', e => {
   const u = new URL(e.request.url), same = u.origin === location.origin;
   if (e.request.method !== 'GET' || (!same && !EXT.includes(u.hostname))) return;
   e.respondWith(caches.open(C).then(async c => {
-    if (same) return fetch(e.request, { cache: 'no-cache' }).then(r => { if (r.ok) c.put(e.request, r.clone()); return r; }).catch(() => c.match(e.request));
+    if (same) return fetch(e.request, { cache: 'no-cache' }).then(async r => { if (r.ok) { c.put(e.request, r.clone()); return r; } return (r.status === 404 || r.status >= 500) && await c.match(e.request) || r; })
+      .catch(async () => (await c.match(e.request)) || (e.request.mode === 'navigate' ? await c.match('index.html') : null) || Response.error());
     const hit = await c.match(e.request); if (hit) return hit;
     const r = await fetch(e.request); if (r.ok || r.type === 'opaque') c.put(e.request, r.clone()); return r;
   }));
