@@ -1,12 +1,12 @@
 // AGRESSIVE LIFT — SPA modular. Estado único (S) + render por plantillas + delegación de eventos.
-import { CONFIG_OK, AI_ON, hasAiKey, setAiKey, LOCAL_MODE, AUTH_MISCONFIGURED, sb, signIn, signUp, signOut, checkLicense, saveSet, saveBody, ai, flush, aiModel, pickModel, aiProvider, validKey } from './supabase.js';
+import { CONFIG_OK, AI_ON, hasAiKey, setAiKey, LOCAL_MODE, AUTH_MISCONFIGURED, sb, signIn, signUp, signOut, checkLicense, saveSet, saveBody, ai, flush, aiModel, pickModel, aiProvider, validKey, conn, onConn, connectAI, setOffline } from './supabase.js';
 import { hydrate, store, profile, PROFILES } from './store.js';
 import * as E from './engine.js';
 import * as N from './nutrition.js';
 
 /* ---------- Utilidades y persistencia local ---------- */
 const $ = s => document.querySelector(s);
-const VERSION = 'v28';
+const VERSION = 'v29';
 const esc = t => String(t).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 await hydrate(); // IndexedDB → caché en memoria
 const localIso = t => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
@@ -227,7 +227,9 @@ const mesoWeek = () => Math.min(S.meso.weeks, Math.floor((Date.now() - S.meso.st
 
 /* ---------- Auth + muro de licencia ---------- */
 async function gate(session) {
-  if (LOCAL_MODE) { S.user = { id: 'local-' + profile, email: PROFILES[profile] }; S.screen = 'app'; S.msg = ''; return render(); } // sin login (temporal)
+  if (LOCAL_MODE) { S.user = { id: 'local-' + profile, email: PROFILES[profile] }; S.msg = ''; // sin login: primero se CONECTA la IA
+    if (hasAiKey() || !store.get('aiAsked')) { S.screen = 'aiconnect'; startConnect(); } else S.screen = 'app';
+    return render(); }
   if (AUTH_MISCONFIGURED) { S.user = null; S.lock = 'network'; S.screen = 'locked'; return render(); }      // fail-closed
   if (!session) { S.user = null; S.screen = 'auth'; return render(); }
   S.user = session.user; S.screen = 'boot'; render();
@@ -287,6 +289,43 @@ const spark = v => { if (v.length < 2) return ''; const lo = Math.min(...v), hi 
 const e1h = id => { const l = (S.logs[id] || []).filter(x => x.t !== 'w'); return [...new Set(l.map(s => s.d))].map(d => Math.max(...l.filter(s => s.d === d).map(s => s.w * (1 + s.r / 30)))).slice(-12); };
 
 /* ---------- Vistas ---------- */
+/* ---------- Conexión con la IA: conectando → éxito / reintentar / modo offline ---------- */
+const connSmall = () => S.offlineMode ? '📴 offline' : !hasAiKey() ? 'conectar' : conn.state === 'connecting' ? '⏳ conectando' : conn.state === 'ok' ? esc(aiModel() || conn.model || 'activa') : conn.state === 'idle' ? 'activa' : '⚠️ reintentar';
+const failTitle = c => c.state === 'offline' ? 'Sin internet' : c.kind === 'key' ? 'Clave no válida' : c.kind === 'quota' ? 'Límite alcanzado' : 'No pude conectar con la IA';
+const connBanner = () => {
+  if (!LOCAL_MODE) return '';
+  const c = conn, P = c.provider || aiProvider();
+  if (S.offlineMode) return `<div class="card connbar mt-3"><div class="flex justify-between items-center gap-2"><div class="min-w-0 text-sm">📴 <b>Modo offline</b><div class="text-xs text-zinc-400">Respuestas locales. Entrenar y registrar funciona igual.</div></div><div class="flex gap-2 flex-none"><button class="chip !px-3" data-act="offlinehelp">¿Cómo sigo?</button><button class="chip on !px-3" data-act="connretry">Reconectar</button></div></div></div>`;
+  if (!hasAiKey()) return store.get('aiAsked') ? `<div class="card connbar mt-3"><div class="flex justify-between items-center gap-2"><div class="min-w-0 text-sm">🤖 <b>IA sin conectar</b><div class="text-xs text-zinc-400">Conéctala gratis para rutinas y dietas a tu medida.</div></div><button class="chip on !px-3 flex-none" data-act="aikey">Conectar</button></div></div>` : '';
+  if (c.state === 'connecting') return `<div class="card on connbar mt-3"><span class="spin"></span><b>Conectando con ${esc(P)}…</b>${c.tries > 1 ? ` <span class="text-xs text-zinc-400">intento ${c.tries}/3</span>` : ''}</div>`;
+  if (c.state === 'ok') return (S.connOkUntil || 0) > Date.now() ? `<div class="card connbar ok mt-3">✅ <b>Conexión exitosa</b> <span class="text-xs text-zinc-400">· ${esc(P)} · ${esc(c.model)}</span></div>` : '';
+  if (c.state === 'fail' || c.state === 'offline') return `<div class="card connbar bad mt-3"><div class="text-sm">⚠️ <b>${failTitle(c)}</b></div><div class="text-xs text-zinc-400 mt-1">${esc(c.msg)}</div>
+    <div class="flex gap-2 mt-2"><button class="btn fill flex-1" data-act="${c.kind === 'key' ? 'aikeychange' : 'connretry'}">${c.kind === 'key' ? 'Cambiar clave' : 'Reintentar'}</button><button class="btn ghost flex-1" data-act="connoffline">Modo offline</button></div></div>`;
+  return '';
+};
+const aiconnectView = () => {
+  const c = conn, P = c.provider || aiProvider(), bad = c.state === 'fail' || c.state === 'offline';
+  const inner = c.state === 'ok' ? `<div style="font-size:56px">✅</div><div class="font-bold text-xl neon mt-2">Conexión exitosa</div><div class="text-sm text-zinc-400 mt-1">${esc(P)} · ${esc(c.model)}</div><div class="text-xs text-zinc-500 mt-3">Entrando…</div>`
+    : c.state === 'nokey' ? `<div class="font-bold text-xl neon">🤖 Conecta tu IA</div><div class="text-sm text-zinc-300 mt-2">Con una clave gratis de Google Gemini tu entrenador y tu nutricionista arman rutinas y dietas a tu medida. Toma 2 minutos y no pide tarjeta.</div><button class="btn fill w-full mt-4" data-act="aikey">Conectar ahora</button><button class="btn ghost w-full mt-2" data-act="connoffline">Seguir sin IA (modo offline)</button>`
+    : bad ? `<div style="font-size:48px">${c.state === 'offline' ? '📴' : '⚠️'}</div><div class="font-bold text-xl neon mt-2">${failTitle(c)}</div><div class="text-sm text-zinc-300 mt-2">${esc(c.msg)}</div><button class="btn fill w-full mt-4" data-act="${c.kind === 'key' ? 'aikeychange' : 'connretry'}">${c.kind === 'key' ? 'Cambiar clave' : 'Reintentar'}</button><button class="btn ghost w-full mt-2" data-act="connoffline">Seguir en modo offline</button>`
+    : `<span class="spin big"></span><div class="font-bold text-xl neon mt-3">Conectando con ${esc(P)}…</div><div class="text-sm text-zinc-400 mt-1">${c.tries > 1 ? `Reintentando (${c.tries}/3)…` : 'Verificando tu clave y la conexión'}</div>${S.connSlow ? '<button class="btn ghost w-full mt-4" data-act="connskip">Entrar sin esperar</button>' : ''}`;
+  return `<div style="padding:12vh 8px 0;text-align:center"><img src="logo.png" width="120" height="120" alt="" style="margin:0 auto 18px;border-radius:50%">${inner}</div>`;
+};
+function startConnect() {
+  S.connSlow = false; S.offlineMode = false; clearTimeout(startConnect.t);
+  startConnect.t = setTimeout(() => { S.connSlow = true; render(); }, 4000);
+  connectAI().finally(() => clearTimeout(startConnect.t));
+}
+onConn(c => {
+  if (c.state === 'ok') {
+    S.offlineMode = false; S.connOkUntil = Date.now() + 4000; setTimeout(render, 4100);
+    if (S.screen === 'aiconnect') setTimeout(() => { if (S.screen === 'aiconnect') { S.screen = 'app'; render(); } }, 900);
+  }
+  render();
+});
+addEventListener('online', () => { if (hasAiKey() && conn.state !== 'ok' && conn.state !== 'connecting' && S.screen !== 'boot') startConnect(); }); // volvió la señal: reconecta sola
+document.addEventListener('visibilitychange', () => { if (!document.hidden && hasAiKey() && ['fail', 'offline'].includes(conn.state) && Date.now() - conn.at > 15000) connectAI(); });
+
 const authView = () => `
 <div class="pt-24 text-center">
   <img src="logo.png" alt="AGRESSIVE LIFT" width="220" height="220" class="mx-auto">
@@ -313,9 +352,10 @@ const header = () => `
 <div class="flex justify-between items-center pt-4">
   <div><div class="brand-title font-black neon"><img src="icon-180.png" alt="">AGRESSIVE LIFT</div>
   <div class="text-xs text-zinc-500">Mesociclo · semana ${mesoWeek()}/${S.meso.weeks} · rotación bloqueada · ${VERSION}</div>${xpLine()}</div>
-  ${LOCAL_MODE ? `<button class="btn ghost" data-act="aikey">🤖 IA<br><small>${AI_ON ? esc(aiModel() || 'activa') : 'conectar'}</small></button><button class="btn ghost" data-act="switchuser">👤 ${esc(PROFILES[profile])}<br><small>Cambiar</small></button>` : '<button class="btn ghost" data-act="logout">Salir</button>'}
+  ${LOCAL_MODE ? `<button class="btn ghost" data-act="aikey">🤖 IA<br><small>${connSmall()}</small></button><button class="btn ghost" data-act="switchuser">👤 ${esc(PROFILES[profile])}<br><small>Cambiar</small></button>` : '<button class="btn ghost" data-act="logout">Salir</button>'}
 </div>
 ${raveOn() ? `<div class="card on mt-3 text-sm">🔒 Modo Rave activo: PRs bloqueados ${Math.ceil((S.rave.prUntil - Date.now()) / 36e5)} h más. Entrena para técnica, no para récords.</div>` : ''}
+${connBanner()}
 <div class="tabbar">${[['train', '🏋️', 'Entrenar'], ['food', '🍽️', 'Nutrición'], ['map', '🧬', 'Músculos'], ['control', '📊', 'Control']]
   .map(([k, i, l]) => `<button class="chip flex-1 tabbtn ${S.view === k ? 'on' : ''}" data-act="view" data-v="${k}"><span class="ti">${i}</span><span>${l}</span></button>`).join('')}</div>
 </div>`;
@@ -1152,6 +1192,22 @@ const sheet = () => {
   if (m.type === 'acr') { const g = GLOSSARY[m.k];
     return `<div class="sheet"><div><div class="text-xs text-zinc-500 uppercase tracking">Significado</div><div class="font-bold text-lg neon">${esc(m.k)} · ${esc(g.n)}</div><div class="text-sm mt-2">${esc(g.d)}</div>${g.p ? `<div class="text-sm mt-2">🎯 Te conviene si ${esc(g.p)}</div>` : ''}${g.a ? `<div class="text-sm text-zinc-400 mt-2">📲 En tu plan: ${esc(g.a)}</div>` : ''}<button class="btn ghost w-full mt-3" data-act="closemodal">Cerrar</button></div></div>`; }
   if (m.type === 'titan') return titanSheet();
+  if (m.type === 'offlinehelp') return `<div class="sheet"><div style="max-height:92vh;overflow:auto">
+    <div class="text-xs text-zinc-500 uppercase tracking">Sin conexión</div><div class="font-bold text-xl neon">📴 Cómo seguir en modo offline</div>
+    <ul class="strat mt-2"><li>🏋️ <b>Entrenar funciona igual</b>: tu rutina, el descanso entre series y el registro de series se guardan en el celular y no necesitan internet.</li>
+    <li>🍽️ <b>Registrar comida</b>: escribe tú los macros, por ejemplo «arroz y pollo 650 kcal 45p 70c 15g».</li>
+    <li>📅 Tu <b>plan, menú y PDF</b> ya guardados se siguen viendo y puedes descargar el PDF.</li>
+    <li>🤖 Lo que usa IA (armar rutina o dieta por chat, interpretar comidas en texto libre) queda en pausa y responde con reglas básicas.</li>
+    <li>🔄 Cuando tengas internet toca <b>Reconectar</b> en la franja de arriba. También reconecta sola cuando vuelve la señal.</li></ul>
+    <div class="text-xs text-zinc-500 mt-2">Tus datos no se pierden: todo queda guardado en este dispositivo.</div>
+    <button class="btn fill w-full mt-3" data-act="closemodal">Entendido</button></div></div>`;
+  if (m.type === 'aistatus') { const c = conn, st = c.state === 'ok' ? `✅ Conectada · ${esc(c.provider || aiProvider())} · ${esc(c.model)}` : c.state === 'connecting' ? '⏳ Conectando…' : (c.state === 'fail' || c.state === 'offline') ? `⚠️ ${esc(failTitle(c))}<div class="text-xs text-zinc-400 mt-1">${esc(c.msg)}</div>` : S.offlineMode ? '📴 Modo offline' : 'Clave guardada · sin verificar';
+    return `<div class="sheet"><div><div class="text-xs text-zinc-500 uppercase tracking">Tu IA</div><div class="font-bold text-xl neon">🤖 ${esc(aiProvider())}</div>
+    <div class="card mt-2 text-sm">${st}</div>
+    <button class="btn fill w-full mt-3" data-act="connretry">${c.state === 'ok' ? 'Probar la conexión' : 'Reintentar conexión'}</button>
+    <button class="btn ghost w-full mt-2" data-act="aikeychange">Cambiar clave</button>
+    <button class="btn ghost w-full mt-2" data-act="aikeydel">Borrar clave</button>
+    <button class="btn ghost w-full mt-2" data-act="closemodal">Cerrar</button></div></div>`; }
   if (m.type === 'aisetup') return `<div class="sheet"><div style="max-height:92vh;overflow:auto">
     <div class="text-xs text-zinc-500 uppercase tracking">Paso importante</div>
     <div class="font-bold text-xl neon">🤖 Conecta tu IA</div>
@@ -1219,6 +1275,7 @@ const sheet = () => {
 function render() {
   if (S.screen === 'app') syncHist();
   const html = S.screen === 'boot' ? '<div class="pt-48 text-center neon text-xl">Verificando licencia…</div>'
+    : S.screen === 'aiconnect' ? aiconnectView() + sheet() + (S.toast ? `<div class="toast">${esc(S.toast)}</div>` : '')
     : S.screen === 'auth' ? authView() : S.screen === 'locked' ? lockedView()
     : !S.onboarded ? onboardingView() + sheet() + restBar() + (S.toast ? `<div class="toast">${esc(S.toast)}</div>` : '')
     : header() + (S.view === 'train' ? trainView() : S.view === 'food' ? foodView() : S.view === 'control' ? controlView() : mapView()) + sheet() + restBar() + (S.toast ? `<div class="toast">${esc(S.toast)}</div>` : '');
@@ -1250,21 +1307,19 @@ const ACT = {
   recheck() { return gate({ user: S.user }); },
   resetplan() { if (!confirm('¿Reiniciar el plan de entrenamiento? Solo para pruebas: se quita el bloqueo y vuelve la configuración inicial.')) return; S.planLock = null; S.coachPending = null; S.trainingOnboarded = false; delete S.trainingPreferences.lastWorkout; store.set('planLock', null); store.set('coachPending', null); store.set('trainingOnboarded', false); store.set('trainingPreferences', S.trainingPreferences); toast('Plan desbloqueado'); },
   dietreset() { if (!confirm('¿Reiniciar la dieta? Solo para pruebas: se borra el bloqueo y tus macros calculados.')) return; S.dietLock = null; S.target = null; S.profile = null; store.set('dietLock', null); persist('profile', 'target'); toast('Dieta reiniciada'); },
-  aikey() {
-    if (!hasAiKey()) { S.modal = { type: 'aisetup' }; return; }
-    const k = prompt(hasAiKey() ? 'Ya hay una clave guardada. Pega una nueva, o deja vacío y acepta para BORRARLA:' : 'Pega tu clave de IA (Gemini: AIza… gratis · OpenAI: sk-…). Se guarda solo en este dispositivo:');
-    if (k === null) return; const t = k.trim();
-    if (t && !validKey(t)) return alert('Esa clave no parece válida: debe empezar con AIza (Gemini) o sk- (OpenAI).');
-    setAiKey(t); toast(t ? '🤖 Verificando la clave…' : 'IA desconectada');
-    if (t) pickModel(true).then(m => { toast(m ? `🤖 IA conectada · ${aiProvider()} · ${m}` : '⚠️ No pude verificar la clave: revisa que esté completa y que tengas conexión'); render(); }).catch(() => {});
-  },
+  aikey() { S.modal = hasAiKey() ? { type: 'aistatus' } : { type: 'aisetup' }; },
+  aikeychange() { S.modal = { type: 'aisetup' }; },
+  aikeydel() { if (!confirm('¿Borrar la clave de IA de este dispositivo?')) return; setAiKey(''); S.modal = null; S.offlineMode = false; toast('IA desconectada'); },
   aikeysave() {
     const t = ($('#aikey-in')?.value || '').trim();
     if (!validKey(t)) return alert('Esa clave no parece válida: debe empezar con AIza (Gemini) o sk- (OpenAI) y estar completa.');
-    setAiKey(t); store.set('aiAsked', true); S.modal = null; toast('🤖 Verificando la clave…');
-    pickModel(true).then(m => { toast(m ? `🤖 IA conectada · ${aiProvider()} · ${m}` : '⚠️ No pude verificar la clave: revisa que esté completa y que tengas conexión'); render(); }).catch(() => {});
+    setAiKey(t); store.set('aiAsked', true); S.modal = null; startConnect(); // el estado de la conexión se ve en pantalla
   },
-  aikeylater() { store.set('aiAsked', true); S.modal = null; toast('Puedes conectarla cuando quieras en el botón 🤖 IA'); },
+  aikeylater() { store.set('aiAsked', true); S.modal = null; if (S.screen === 'aiconnect') S.screen = 'app'; toast('Puedes conectarla cuando quieras en el botón 🤖 IA'); },
+  connretry() { if (!hasAiKey()) { S.modal = { type: 'aisetup' }; return; } S.modal = null; startConnect(); },
+  connoffline() { if (!hasAiKey()) store.set('aiAsked', true); setOffline(true); S.offlineMode = true; S.screen = 'app'; S.modal = { type: 'offlinehelp' }; },
+  connskip() { S.screen = 'app'; }, // entra sin esperar: la conexión sigue en segundo plano y se ve en la franja
+  offlinehelp() { S.modal = { type: 'offlinehelp' }; },
   switchuser() { sessionStorage.removeItem('al:profile'); sessionStorage.removeItem('alReload'); location.reload(); },
   startworkout() { // INICIAR desde la tarjeta de XP: abre la rutina de hoy
     S.view = 'train'; S.coachOpen = true;
@@ -1843,7 +1898,7 @@ async function sendCoachMessage(text) {
     S.coachChat[S.coachChat.length - 1] = { role: 'assistant', text: out }; S.note = out; store.set('note', out);
   } catch (e) { // la IA falló: modo local por reglas + aviso
     S.coachChat.splice(-2); S.coachBusy = false; await coachLocal(text, true);
-    const last = S.coachChat[S.coachChat.length - 1]; if (last) last.text += '\n\n⚠️ La IA no respondió (' + (e.message || e) + '); usé el modo local.';
+    const last = S.coachChat[S.coachChat.length - 1]; if (last) last.text += '\n\n⚠️ La IA no respondió (' + (e.message || e) + '); usé el modo local. Toca «Reintentar» en la franja de arriba para reconectar.';
   }
   S.coachBusy = false; S.coachChat = S.coachChat.slice(-60); store.set('coachChat', S.coachChat); render();
 }
@@ -1955,7 +2010,7 @@ document.addEventListener('click', async e => {
   const el = e.target.closest('[data-act]'); if (!el) return;
   const f = ACT[el.dataset.act]; if (!f) return;
   await f(el.dataset); restSync();
-  if (S.screen === 'app') render();
+  if (S.screen === 'app' || S.screen === 'aiconnect') render();
 });
 document.addEventListener('keydown', e => {
   const el = e.target.closest?.('.muscle-region');
@@ -1995,9 +2050,7 @@ if (CONFIG_OK) {
 } else { gate(); }
 try { migrateCalendar(); } catch (e) { console.error(e); }
 try { if (!S.menuWeekSeen) { S.menuWeekSeen = mondayOf(today()); store.set('menuWeekSeen', S.menuWeekSeen); } checkBadges(false); } catch (e) { console.error(e); }
-if (hasAiKey()) pickModel().then(() => render()).catch(() => {});
 maybeTitan();
-if (LOCAL_MODE && !hasAiKey() && !store.get('aiAsked') && !S.modal) S.modal = { type: 'aisetup' }; // primer inicio: pedir la clave de IA
 render();
 window.__ok = 1;
 setTimeout(() => import('./pdf.js').catch(() => {}), 1500); // precarga: no bloquea el arranque

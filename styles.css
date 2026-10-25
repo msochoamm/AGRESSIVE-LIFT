@@ -207,3 +207,12 @@ details>summary{cursor:pointer}
 .chk i{flex:none;width:24px;height:24px;border:2px solid #6b6b74;border-radius:6px;display:flex;align-items:center;justify-content:center;font-style:normal;font-size:16px;line-height:1;color:#000}
 .chk[aria-pressed=true]{border-color:var(--red);background:var(--red-soft)}.chk[aria-pressed=true] i{background:var(--red);border-color:var(--red)}
 
+
+/* ---------- Conexión con la IA (v29) ---------- */
+.spin{display:inline-block;width:18px;height:18px;border:3px solid rgba(255,43,87,.25);border-top-color:var(--red);border-radius:50%;animation:spin .8s linear infinite;vertical-align:-3px;margin-right:8px}
+.spin.big{display:block;width:56px;height:56px;border-width:5px;margin:0 auto}
+@keyframes spin{to{transform:rotate(360deg)}}
+.connbar{padding:10px 12px;margin-bottom:0}
+.connbar.bad{border-color:rgba(255,170,0,.75);box-shadow:0 0 14px rgba(255,170,0,.18)}
+.connbar.ok{border-color:rgba(60,220,120,.7);box-shadow:0 0 14px rgba(60,220,120,.22);animation:fadein .3s ease-out}
+@keyframes fadein{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
