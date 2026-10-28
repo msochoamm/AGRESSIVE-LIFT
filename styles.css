@@ -231,3 +231,19 @@ details>summary{cursor:pointer}
 .wz-q{font-weight:700;margin:14px 0 6px;font-size:15px}
 .chips{display:flex;flex-wrap:wrap;gap:8px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+
+/* ---------- v32: fotos de comida, compras con checklist, selector de alimentos ---------- */
+.chip.off{opacity:.55;text-decoration:line-through}.chip.dim{opacity:.28}.chip small{opacity:.6;font-size:10px}
+.hintbox{margin-top:8px;padding:8px 10px;border:1px dashed rgba(255,43,87,.5);border-radius:10px;font-size:13px;line-height:1.4;color:#d4d4d8;display:flex;flex-direction:column;gap:4px}
+.pvimg{width:100%;max-height:150px;object-fit:cover;border-radius:8px;margin-bottom:6px}
+.pvitem{border-top:1px solid var(--line);padding:8px 0}.pvitem:first-of-type{border-top:0}
+.pv4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-top:6px}
+.pvl{display:flex;flex-direction:column;gap:2px;font-size:11px;color:#a1a1aa;min-width:0}
+.pvl input{padding:8px 6px;font-size:16px;text-align:center}
+.shop-row{padding:8px 0;border-top:1px solid #1a1a1d}.shop-row.ok{opacity:.7}
+.chk-sq{flex:none;width:44px;height:44px;display:flex;align-items:center;justify-content:center;background:none;border:0}
+.chk-sq i{width:26px;height:26px;border:2px solid #6b6b74;border-radius:7px;display:flex;align-items:center;justify-content:center;font-style:normal;font-size:17px;color:#000}
+.chk-sq[aria-pressed=true] i{background:var(--red);border-color:var(--red)}
+.shin{padding:9px 10px;font-size:16px}
+.shop-sum{display:flex;justify-content:space-between;gap:8px;font-size:13px;color:#a1a1aa;margin:8px 0}.shop-sum b{color:#fff}
+.line-through{text-decoration:line-through}

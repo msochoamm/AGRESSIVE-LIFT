@@ -219,12 +219,12 @@ async function direct(task, payload) {
 }
 
 /* Llamadas a cada proveedor + cadena de respaldo (reintenta red/saturación y cambia de modelo si hay cupo agotado o no existe). */
-async function gemCall(key, model, messages, { isMeal }) {
+async function gemCall(key, model, messages, { isMeal, vision }) {
   const sys = messages.filter(m => m.role === 'system').map(m => m.content).join('\n\n'), contents = [];
-  for (const m of messages) { if (m.role === 'system') continue; const role = m.role === 'assistant' ? 'model' : 'user', text = String(m.content ?? '');
-    if (contents.length && contents[contents.length - 1].role === role) contents[contents.length - 1].parts[0].text += '\n\n' + text; else contents.push({ role, parts: [{ text }] }); }
+  for (const m of messages) { if (m.role === 'system') continue; const role = m.role === 'assistant' ? 'model' : 'user', text = String(m.content ?? ''), img = m.image ? { inline_data: { mime_type: m.image.mime, data: m.image.b64 } } : null;
+    if (contents.length && contents[contents.length - 1].role === role) { const last = contents[contents.length - 1]; last.parts[0].text += '\n\n' + text; if (img) last.parts.push(img); } else contents.push({ role, parts: img ? [{ text }, img] : [{ text }] }); }
   while (contents.length && contents[0].role === 'model') contents.shift();
-  const body = { contents, generationConfig: { maxOutputTokens: isMeal ? 3000 : 8000, responseMimeType: 'application/json' } };
+  const body = { contents, generationConfig: { maxOutputTokens: isMeal ? (vision ? 6000 : 3000) : 8000, responseMimeType: 'application/json' } };
   if (sys) body.systemInstruction = { parts: [{ text: sys }] };
   const { res, j } = await http(`${GEM}/models/${encodeURIComponent(model)}:generateContent`, { method: 'POST', headers: { 'x-goog-api-key': key, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, 90000);
   if (!res.ok) throw statusErr(res, j);
@@ -234,7 +234,8 @@ async function gemCall(key, model, messages, { isMeal }) {
 }
 async function oaiCall(key, model, messages, { heavy, isMeal }) {
   const reasoning = /^(gpt-[5-9]|o\d)/.test(model), url = PROVIDERS.openai.base + '/chat/completions';
-  const mk = plain => JSON.stringify({ model, messages, max_completion_tokens: reasoning ? (isMeal ? 3000 : 8000) : (isMeal ? 1500 : 4000),
+  const msgs = messages.map(m => (m.image ? { role: m.role, content: [{ type: 'text', text: String(m.content ?? '') }, { type: 'image_url', image_url: { url: `data:${m.image.mime};base64,${m.image.b64}` } }] } : m));
+  const mk = plain => JSON.stringify({ model, messages: msgs, max_completion_tokens: reasoning ? (isMeal ? 3000 : 8000) : (isMeal ? 1500 : 4000),
     ...(plain ? {} : reasoning ? { reasoning_effort: !heavy ? 'low' : 'medium' } : { temperature: isMeal ? 0.2 : 0.7 }), response_format: { type: 'json_object' } });
   const init = body => ({ method: 'POST', headers: { Authorization: 'Bearer ' + key, 'Content-Type': 'application/json' }, body });
   let { res, j } = await http(url, init(mk(false)), 90000);
@@ -257,6 +258,28 @@ async function generate(messages, opts) {
     }
   }
   throw last || new AIError('other', 'La IA no respondió.');
+}
+
+/* ---------- v32: análisis de fotos (plato o tabla nutricional) con el modelo de visión de tu clave ---------- */
+const VISION_FOOD = `Eres un nutricionista deportivo que estima calorías y macros de un plato a partir de una FOTO (cocina colombiana frecuente: arroz, fríjoles, plátano, arepa, huevos, pollo, corrientazo).
+Pasos: 1) identifica cada alimento visible por separado; 2) estima el peso en gramos de cada porción usando referencias de la imagen (plato ~25 cm, cubiertos, manos, empaques); 3) suma grasas ocultas (aceite, mantequilla, salsas, fritura) cuando se vean brillos o fritos; 4) calcula kcal, proteína, carbohidratos y grasa de cada alimento con valores nutricionales estándar y coherentes (kcal ≈ 4·P + 4·C + 9·G).
+Si el usuario aporta contexto (gramos, ingredientes, marca) úsalo por encima de tu estimación visual. Si algo no se ve (sopas, batidos, rellenos) dilo en note y baja la confianza. Si la imagen no tiene comida devuelve items [] y explícalo en note. No inventes alimentos que no se vean.
+Responde SOLO un JSON válido: {"items":[{"name":"...","grams":150,"k":250,"p":20,"c":10,"f":12}],"confidence":0.0,"note":"supuestos y qué dato mejoraría la estimación (máx. 2 frases)"}`;
+const VISION_LABEL = `Lees la TABLA NUTRICIONAL de un empaque a partir de una FOTO. Copia los valores tal como están impresos; no inventes ni estimes números que no se vean.
+Extrae: nombre del producto si aparece, el tamaño de la porción (texto y gramos/ml si se indican), y los valores POR PORCIÓN y, si la tabla los trae, POR 100 g. k = calorías (kcal), p = proteína (g), c = carbohidratos totales (g), f = grasa total (g). Si la tabla está en kJ, convierte a kcal (kJ / 4.184).
+Si la imagen no es una tabla nutricional o no se lee, devuelve confidence 0 y explica en note qué falló (luz, enfoque, ángulo).
+Responde SOLO un JSON válido: {"product":"","servingText":"1 porción (30 g)","servingGrams":30,"perServing":{"k":0,"p":0,"c":0,"f":0},"per100g":{"k":0,"p":0,"c":0,"f":0},"confidence":0.0,"note":""}. Usa null en per100g si no aparece.`;
+/** kind: 'food' | 'label'. dataUrl: JPEG en base64 (la app lo reduce antes). hint: texto opcional del usuario. Devuelve el JSON del modelo. */
+export async function aiVision(kind, dataUrl, hint = '') {
+  if (!getKey()) throw new AIError('key', 'Falta conectar la IA para analizar fotos.');
+  const m = /^data:([^;]+);base64,(.+)$/.exec(dataUrl); if (!m) throw new AIError('other', 'No pude leer la imagen.');
+  const messages = [{ role: 'system', content: kind === 'label' ? VISION_LABEL : VISION_FOOD }, { role: 'user', content: hint ? `Contexto del usuario: ${hint}` : 'Analiza esta imagen.', image: { mime: m[1], b64: m[2] } }];
+  let text;
+  try { text = await generate(messages, { heavy: false, isMeal: true, vision: true }); }
+  catch (e) { if (e instanceof AIError && ['network', 'timeout', 'key', 'quota', 'server'].includes(e.kind)) setConn({ state: e.kind === 'network' && typeof navigator !== 'undefined' && navigator.onLine === false ? 'offline' : 'fail', kind: e.kind, msg: e.message }); throw e; }
+  let o; try { o = JSON.parse(text); } catch { try { o = JSON.parse((text.match(/\{[\s\S]*\}/) || ['{}'])[0]); } catch { o = {}; } }
+  if (!o || typeof o !== 'object' || Array.isArray(o)) throw new AIError('empty', 'La IA no devolvió un resultado legible. Reintenta con otra foto.');
+  return o;
 }
 
 export async function ai(task, payload) {

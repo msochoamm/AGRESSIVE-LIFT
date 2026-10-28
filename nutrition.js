@@ -225,11 +225,11 @@ const OPT2FOODS = { pollo: ['muslo', 'pechuga'], molida: ['molida'], res: ['res'
 export function proteinPool(prefs = {}) {
   const maxTier = { economico: 1, medio: 2, libre: 3 }[prefs.budget] || 2, veg = (prefs.restrict || []).includes('vegetariano');
   const chosen = (prefs.proteins || []).flatMap(o => OPT2FOODS[o] || []);
-  let want = chosen.filter(id => !(veg && MEAT.includes(id)));
+  const exl = prefs.excluded || []; let want = chosen.filter(id => !(veg && MEAT.includes(id)) && !exl.includes(id));
   const ok = want.filter(id => FOODS[id].tier <= maxTier), excluded = want.filter(id => FOODS[id].tier > maxTier);
   let pool = [...ok], added = [];
   const cheap = veg ? ['huevo', 'lenteja', 'frijol'] : ['muslo', 'huevo', 'corazon', 'lenteja', 'higado'];
-  for (const id of cheap) { if (pool.length >= 3) break; if (!pool.includes(id) && FOODS[id].tier <= maxTier && !(veg && MEAT.includes(id))) { pool.push(id); added.push(id); } }
+  for (const id of cheap) { if (pool.length >= 3) break; if (!pool.includes(id) && FOODS[id].tier <= maxTier && !(veg && MEAT.includes(id)) && !exl.includes(id)) { pool.push(id); added.push(id); } }
   pool.sort((a, b) => FOODS[a].tier - FOODS[b].tier);
   return { pool, excluded, added };
 }
@@ -264,7 +264,7 @@ export function generateMenu(target, prefs = {}, seed = 0, opts = {}) {
   const rs = prefs.restrict || [], noDairy = rs.includes('lacteos') || false, noGluten = rs.includes('gluten'), whey = (prefs.supps || []).includes('whey');
   const eggOK = (prefs.proteins || []).includes('huevo') || !(prefs.proteins || []).length, atunOK = (prefs.proteins || []).includes('atun');
   const fridge = prefs.fridge || 'mixto', cookMax = { rapido: 15, medio: 30, largo: 999 }[prefs.cook] || 999, batch = prefs.style === 'batch';
-  const veg = rs.includes('vegetariano');
+  const veg = rs.includes('vegetariano'), ex = prefs.excluded || []; // ex: alimentos que la persona quitó en «Elige tus alimentos»
   // Pool genérico: sin huevo/hígado/legumbres como proteína principal (cantidades poco realistas); solo si la plantilla lo pide o no hay otra.
   const poolFor = t => { const f = (list) => list.filter(id => (!t.p.only || t.p.only.includes(id)) && !(t.p.not || []).includes(id)); const base = f(pool.filter(id => !['huevo', 'higado', 'lenteja', 'frijol'].includes(id) || (t.p.only || []).includes(id))); return base.length || t.p.only ? base : f(pool); };
   const allow = t => {
@@ -272,6 +272,7 @@ export function generateMenu(target, prefs = {}, seed = 0, opts = {}) {
     if (t.tags.includes('whey') && !whey) return false; if (t.tags.includes('egg') && !eggOK) return false;
     if (t.needs === 'eatsout' && prefs.eatsout !== 'si') return false; if (t.needs === 'atun' && !atunOK) return false;
     if (t.needs === 'legumbres' && !(prefs.proteins || []).includes('legumbres')) return false; if (t.needs === 'veg' && !veg) return false;
+    if (t.p.food && ex.includes(t.p.food)) return false; if (ex.includes(t.c)) return false; if (t.fixed.some(([id]) => ex.includes(id) && id !== 'verduras')) return false;
     if (t.p.pool && !poolFor(t).length) return false;
     return true;
   };
@@ -292,7 +293,8 @@ export function generateMenu(target, prefs = {}, seed = 0, opts = {}) {
       let pf = tpl.p.food;
       if (tpl.p.pool) { const p = poolFor(tpl); pf = p[(bi + seed * 2 + si) % p.length]; }
       const T = { p: target.p * fr, c: target.c * fr, f: target.f * fr };
-      const { items, tot } = solve(tpl, pf, tpl.c, T, pool);
+      const tpl2 = ex.length ? { ...tpl, fixed: tpl.fixed.filter(([id]) => !ex.includes(id)), fat: ex.includes(tpl.fat) ? null : tpl.fat } : tpl;
+      const { items, tot } = solve(tpl2, pf, tpl2.c, T, pool);
       return { slot, time: (TIMES[slots.length] || [])[si] || '', id: tpl.id, name: (n => n.charAt(0).toUpperCase() + n.slice(1))(tpl.name.replace('{P}', FOODS[pf].s)), prep: tpl.prep, mins: tpl.mins, steps: (RECIPES[tpl.id] || []).map(x => x.replace(/\{P\}/g, FOODS[pf].s)), items: items.map(it => ({ id: it.id, g: it.g, text: label(it) })), k: Math.round(tot.k), p: Math.round(tot.p), c: Math.round(tot.c), f: Math.round(tot.f) };
     }).filter(Boolean);
     days.push(dayMeals);
@@ -315,7 +317,7 @@ export function groceries(menu) {
   menu.days.forEach(ms => ms.forEach(m => m.items.forEach(it => { tot[it.id] = (tot[it.id] || 0) + it.g * (FOODS[it.id].raw || 1); })));
   return Object.entries(tot).map(([id, g]) => {
     const f = FOODS[id], rounded = Math.ceil(g / 50) * 50;
-    return { id, group: f.kind, n: f.unit ? `${f.n}` : f.n, amount: f.unit ? `${Math.ceil(g / f.unit)} huevos` : rounded >= 1000 ? `${(rounded / 1000).toFixed(rounded % 1000 ? 2 : 0).replace(/0$/, '')} kg` : `${rounded} g`, tier: f.tier };
+    return { id, need: f.unit ? Math.ceil(g / f.unit) : rounded, group: f.kind, n: f.unit ? `${f.n}` : f.n, amount: f.unit ? `${Math.ceil(g / f.unit)} huevos` : rounded >= 1000 ? `${(rounded / 1000).toFixed(rounded % 1000 ? 2 : 0).replace(/0$/, '')} kg` : `${rounded} g`, tier: f.tier };
   }).sort((a, b) => ['prot', 'supp', 'dairy', 'carb', 'veg', 'fat'].indexOf(a.group) - ['prot', 'supp', 'dairy', 'carb', 'veg', 'fat'].indexOf(b.group));
 }
 
@@ -340,4 +342,39 @@ export function strategy({ target, prefs = {}, goal = 'maint', trainDays = 3 }) 
   if ((prefs.supps || []).includes('creatina')) out.push('Creatina: 3–5 g al día, cualquier hora; toma suficiente agua.');
   out.push(`Entrenas ${trainDays} días/semana: pon la comida con más carbohidrato 1–2 h antes de entrenar y proteína en las 2 h posteriores.`);
   return out;
+}
+
+
+/* ---------- v32: alimentos disponibles por presupuesto y selector «Elige tus alimentos» ---------- */
+export const GROUPS = [['prot', 'Proteínas'], ['dairy', 'Lácteos'], ['supp', 'Suplementos'], ['carb', 'Carbohidratos'], ['veg', 'Verduras'], ['fat', 'Grasas']];
+/** Opción del cuestionario (pollo, huevo…) a la que pertenece un alimento. */
+export const optionOf = id => Object.keys(OPT2FOODS).find(o => OPT2FOODS[o].includes(id));
+/** Qué alimentos entran en cada presupuesto (nombres cortos por grupo); null si aún no eligió presupuesto. */
+export function budgetFoods(b) {
+  const max = { economico: 1, medio: 2, libre: 3 }[b]; if (!max) return null;
+  const out = {}; for (const [kind, label] of GROUPS) out[label] = Object.values(FOODS).filter(f => f.kind === kind && f.tier <= max).map(f => f.s);
+  return out;
+}
+/** Todos los alimentos agrupados con su estado. why: 'budget' (fuera de presupuesto), 'diet' (restricción), 'pick' (no elegido aún), '' (disponible). off = no se usará. */
+export function foodChoices(prefs = {}) {
+  const maxTier = { economico: 1, medio: 2, libre: 3 }[prefs.budget] || 2, rs = prefs.restrict || [], ex = prefs.excluded || [], veg = rs.includes('vegetariano'), pool = new Set(proteinPool(prefs).pool);
+  return GROUPS.map(([kind, label]) => ({ kind, label, items: Object.entries(FOODS).filter(([, f]) => f.kind === kind).map(([id, f]) => {
+    let why = '';
+    if (f.tier > maxTier) why = 'budget';
+    else if (kind === 'dairy' && rs.includes('lacteos')) why = 'diet';
+    else if ((id === 'pan' || id === 'pasta') && rs.includes('gluten')) why = 'diet';
+    else if (veg && MEAT.includes(id)) why = 'diet';
+    else if (kind === 'prot' && !pool.has(id)) why = ex.includes(id) ? '' : 'pick';
+    else if (id === 'whey' && !(prefs.supps || []).includes('whey')) why = 'pick';
+    return { id, n: f.n, tier: f.tier, why, off: !!why || ex.includes(id) };
+  }) }));
+}
+/** Comidas del día que NO se pudieron armar con las exclusiones actuales (lista vacía = todo bien). */
+export function checkMenu(target, prefs = {}) {
+  try {
+    const m = generateMenu(target, prefs, 0, { count: 1 }), want = {}, got = {};
+    (SLOTS[+prefs.meals || 3] || SLOTS[3]).forEach(([sl]) => { want[sl] = (want[sl] || 0) + 1; });
+    (m.days[0] || []).forEach(x => { got[x.slot] = (got[x.slot] || 0) + 1; });
+    return Object.keys(want).filter(sl => (got[sl] || 0) < want[sl]);
+  } catch { return []; }
 }
