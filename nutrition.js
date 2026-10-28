@@ -5,21 +5,30 @@
 // tier de costo en Colombia: 1 barato · 2 medio · 3 caro. raw = factor cocido→crudo para la lista de compras.
 
 /** Plan de cocina: qué comprar/cocinar y cuándo (batch cooking), cómo porcionar y recalentar. */
-export function cookPlan(menu, prefs = {}) {
+/** Tareas de cocina por lotes para los días [from..to] de un menú (sirve para cualquier tanda, no solo domingo/miércoles). */
+export function cookTasks(menu, from, to, label) {
   const block = (from, to) => { const tot = {}, ids = new Set();
     for (let d = from; d <= to; d++) (menu.days[d] || []).forEach(m => { ids.add(m.id); if (m.prep === 'fuera') return; m.items.forEach(it => { if (FOODS[it.id]) tot[it.id] = (tot[it.id] || 0) + it.g * (FOODS[it.id].raw || 1); }); });
     return { tot, ids }; };
   const list = (tot, kind) => Object.entries(tot).filter(([id]) => FOODS[id].kind === kind).map(([id, g]) => `${FOODS[id].n.toLowerCase()} ${Math.round(g / 10) * 10} g`);
-  const tasks = (from, to, label) => { const { tot, ids } = block(from, to), t = [], n = to - from + 1;
-    const prot = list(tot, 'prot').filter(x => !/huevo|cocid/.test(x)), carb = [...list(tot, 'carb'), ...list(tot, 'prot')].filter(x => /cocid/.test(x));
-    const veg = list(tot, 'veg');
-    if (prot.length) t.push(`🍗 Proteínas (peso crudo): ${prot.join(', ')}. Sazona con sal, ajo y pimienta, cocina hasta que estén bien cocidas y porciona en ${n} recipientes (uno por comida).`);
-    if (carb.length) t.push(`🍚 Carbohidratos y legumbres (peso ya cocido): ${carb.join(', ')}. Cocínalos juntos y guárdalos en recipientes aparte de la proteína para que no se pongan blandos.`);
-    if (veg.length) t.push(`🥦 Verduras: ${veg.join(', ')}. Lávalas y córtalas; saltéalas 4-5 min el mismo día de comerlas o déjalas listas crudas.`);
-    if (tot.huevo) t.push(`🥚 Hierve ${Math.ceil(tot.huevo / 50 / 1.0)} huevos duros (10 min) para desayunos y snacks.`);
-    if ([...ids].some(i => /d-oats/.test(i))) t.push('🥣 Avena de frasco: prepárala la noche anterior (avena + leche + whey + banano).');
-    t.push(`📦 Etiqueta cada recipiente con el día (${label}) y guarda lo de los 2 primeros días en la nevera; lo demás, en el congelador si dura más de 3-4 días.`);
-    return t; };
+  const { tot, ids } = block(from, to), t = [], n = to - from + 1;
+  const prot = list(tot, 'prot').filter(x => !/huevo|cocid/.test(x)), carb = [...list(tot, 'carb'), ...list(tot, 'prot')].filter(x => /cocid/.test(x));
+  const veg = list(tot, 'veg');
+  if (prot.length) t.push(`🍗 Proteínas (peso crudo): ${prot.join(', ')}. Sazona con sal, ajo y pimienta, cocina hasta que estén bien cocidas y porciona en ${n} recipientes (uno por comida).`);
+  if (carb.length) t.push(`🍚 Carbohidratos y legumbres (peso ya cocido): ${carb.join(', ')}. Cocínalos juntos y guárdalos en recipientes aparte de la proteína para que no se pongan blandos.`);
+  if (veg.length) t.push(`🥦 Verduras: ${veg.join(', ')}. Lávalas y córtalas; saltéalas 4-5 min el mismo día de comerlas o déjalas listas crudas.`);
+  if (tot.huevo) t.push(`🥚 Hierve ${Math.ceil(tot.huevo / 50 / 1.0)} huevos duros (10 min) para desayunos y snacks.`);
+  if ([...ids].some(i => /d-oats/.test(i))) t.push('🥣 Avena de frasco: prepárala la noche anterior (avena + leche + whey + banano).');
+  t.push(`📦 Etiqueta cada recipiente con el día (${label}) y guarda lo de los 2 primeros días en la nevera; lo demás, en el congelador si dura más de 3-4 días.`);
+  return t;
+}
+/** Una tanda de cocina: días = lista de arreglos de comidas (uno por día). Devuelve la lista de compras EXACTA de esos días y qué cocinar. */
+export function cookBatch(days, label) {
+  const menu = { days };
+  return { groceries: groceries(menu), tasks: cookTasks(menu, 0, Math.max(0, days.length - 1), label) };
+}
+export function cookPlan(menu, prefs = {}) {
+  const tasks = (from, to, label) => cookTasks(menu, from, to, label);
   return [
     { day: 'Domingo', title: 'Compra y cocina por lotes (Lun–Jue)', tasks: ['🛒 Haz la compra con la lista de la semana (revisa la pestaña "Lista de compras").', ...tasks(0, 3, 'Lun–Jue'), '⏱ Calcula 60-90 min de cocina con todo en paralelo: arroz/papa al fuego, proteína en sartén u horno y verduras al final.'] },
     { day: 'Miércoles', title: 'Reposición (Vie–Dom)', tasks: tasks(4, 6, 'Vie–Dom') },
@@ -249,7 +258,8 @@ function solve(tpl, pFood, cFood, T, pool) {
 const label = it => { const f = FOODS[it.id]; return f.unit ? `${it.g / f.unit} ${it.g / f.unit === 1 ? 'huevo' : 'huevos'} (${it.g} g)` : `${it.g} g ${f.n.toLowerCase().replace(' (polvo)', '').replace(' (seca)', '').replace(' (lata)', '')}`; };
 
 /** Menú de 7 días. target = {kcal,p,c,f} base; seed rota las variantes. */
-export function generateMenu(target, prefs = {}, seed = 0) {
+export function generateMenu(target, prefs = {}, seed = 0, opts = {}) {
+  const COUNT = opts.count || 7, blockOf = opts.blockOf || (d => (d < 3 ? 0 : 1)); // blockOf: qué días comparten receta (se cocina una vez)
   const meals = +prefs.meals || 3, slots = SLOTS[meals] || SLOTS[3], { pool, excluded, added } = proteinPool(prefs);
   const rs = prefs.restrict || [], noDairy = rs.includes('lacteos') || false, noGluten = rs.includes('gluten'), whey = (prefs.supps || []).includes('whey');
   const eggOK = (prefs.proteins || []).includes('huevo') || !(prefs.proteins || []).length, atunOK = (prefs.proteins || []).includes('atun');
@@ -274,10 +284,10 @@ export function generateMenu(target, prefs = {}, seed = 0) {
     return list;
   };
   const days = [];
-  for (let d = 0; d < 7; d++) {
+  for (let d = 0; d < COUNT; d++) {
     const dayMeals = slots.map(([slot, fr], si) => {
       const list = pick(slot); if (!list.length) return null;
-      const blocked = (fridge === 'si' && ['desayuno', 'cena', 'snack'].includes(slot)) || (batch && slot !== 'snack'), bi = blocked ? (d < 3 ? 0 : 1) : d;
+      const blocked = (fridge === 'si' && ['desayuno', 'cena', 'snack'].includes(slot)) || (batch && slot !== 'snack'), bi = blocked ? blockOf(d) : d;
       const tpl = list[(bi + seed + si) % list.length];
       let pf = tpl.p.food;
       if (tpl.p.pool) { const p = poolFor(tpl); pf = p[(bi + seed * 2 + si) % p.length]; }

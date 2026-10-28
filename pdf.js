@@ -140,7 +140,7 @@ function cover(d, data) {
   if ((data.strategy || []).length) { d.h2('Tu estrategia'); data.strategy.forEach(s => d.para(s, { size: 9.5, bullet: true, after: 4 })); }
   if ((data.notes || []).length) { d.h2('Notas'); data.notes.forEach(s => d.para(s, { size: 9.5, bullet: true })); }
   d.h2('Cómo usar este plan');
-  ['Cada semana trae su menú día por día, la lista de compras y el plan de cocina (qué cocinar y cuándo).', 'La preparación de cada receta aparece solo la primera vez que se repite en la semana.', 'Si un día se complica, usa las comidas rápidas del menú y no te saltes la proteína.', 'Los pesos y las calorías se auditan cada semana en la app: este PDF es la guía base del mes.']
+  ['Cada semana trae su menú día por día y sus tandas de cocina: cocinas el día de descanso y cada tanda trae su lista de compras exacta y qué cocinar.', 'La preparación de cada receta aparece solo la primera vez que se repite en la semana.', 'Si un día se complica, usa las comidas rápidas del menú y no te saltes la proteína.', 'Los pesos y las calorías se auditan cada semana en la app: este PDF es la guía base del mes.']
     .forEach(s => d.para(s, { size: 9.5, bullet: true }));
 }
 
@@ -152,9 +152,10 @@ export function buildMonthPdf(data = {}) {
     d.band(`Semana ${i + 1}  ·  ${w.label || ''}`, '', { h: 24, size: 13, accent: COL.red });
     if (w.summary) d.para(w.summary, { size: 9, color: COL.mut, after: 6 });
     (w.days || []).forEach(x => d.day(x));
-    d.newPage(); d.groceries(w.groceries, `Semana ${i + 1}`);
+    d.newPage();
+    (w.shop || [{ label: `Semana ${i + 1}`, groceries: w.groceries }]).forEach(sh => { d.need(120); d.groceries(sh.groceries, sh.label); });
     if ((w.cook || []).length) {
-      d.band(`Plan de cocina · Semana ${i + 1}`, '', { h: 20 });
+      d.band(`Tandas de cocina · Semana ${i + 1}`, '', { h: 20 });
       w.cook.forEach(b => { d.para(`${b.day} · ${b.title}`, { size: 10, bold: true, color: COL.red, after: 2 }); (b.tasks || []).forEach(t => d.para(t, { size: 9, bullet: true, indent: 4, after: 2 })); d.y -= 4; });
     }
   });

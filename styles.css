@@ -216,3 +216,18 @@ details>summary{cursor:pointer}
 .connbar.bad{border-color:rgba(255,170,0,.75);box-shadow:0 0 14px rgba(255,170,0,.18)}
 .connbar.ok{border-color:rgba(60,220,120,.7);box-shadow:0 0 14px rgba(60,220,120,.22);animation:fadein .3s ease-out}
 @keyframes fadein{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+
+/* ---------- v30: trofeos, celebración, swap ---------- */
+.badge.lock{opacity:.5;filter:grayscale(1)}
+.badge.lock small{display:block;font-size:10px;line-height:1.2;margin-top:4px;color:#a1a1aa}
+.unl{padding:18px 8px 10px;border-bottom:1px solid #27272a;animation:fadein .35s ease-out}
+.unl:last-of-type{border-bottom:0}
+.unl-ic{font-size:72px;line-height:1;filter:drop-shadow(0 0 18px rgba(255,43,87,.7));animation:unlpop .7s cubic-bezier(.2,1.6,.4,1)}
+@keyframes unlpop{0%{transform:scale(.2) rotate(-25deg);opacity:0}60%{transform:scale(1.25) rotate(8deg);opacity:1}100%{transform:scale(1) rotate(0)}}
+
+/* asistente inicial */
+.wz-bar{height:6px;border-radius:6px;background:#27272a;overflow:hidden;margin:6px 0 14px}
+.wz-bar i{display:block;height:100%;background:linear-gradient(90deg,#ff2b57,#ff7a8f);transition:width .3s}
+.wz-q{font-weight:700;margin:14px 0 6px;font-size:15px}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}

@@ -21,3 +21,11 @@ export async function hydrate() {
   navigator.storage?.persist?.();
 }
 export const store = { get: (k, d) => mem[k] ?? d, set: put };
+
+/* Respaldo: exporta/importa TODOS los datos del perfil activo (registros, plan, dieta, XP se recalcula solo). */
+export const dump = () => ({ app: 'AGRESSIVE-LIFT', v: 1, profile, at: new Date().toISOString(), data: JSON.parse(JSON.stringify(mem)) });
+export function restore(obj) {
+  if (obj?.app !== 'AGRESSIVE-LIFT' || !obj.data || typeof obj.data !== 'object') throw new Error('No es un respaldo de AGRESSIVE LIFT');
+  for (const k in obj.data) put(k, obj.data[k]);
+  return Object.keys(obj.data).length;
+}

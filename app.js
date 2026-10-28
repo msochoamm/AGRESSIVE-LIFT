@@ -1,12 +1,13 @@
 // AGRESSIVE LIFT — SPA modular. Estado único (S) + render por plantillas + delegación de eventos.
 import { CONFIG_OK, AI_ON, hasAiKey, setAiKey, LOCAL_MODE, AUTH_MISCONFIGURED, sb, signIn, signUp, signOut, checkLicense, saveSet, saveBody, ai, flush, aiModel, pickModel, aiProvider, validKey, conn, onConn, connectAI, setOffline } from './supabase.js';
-import { hydrate, store, profile, PROFILES } from './store.js';
+import { hydrate, store, profile, PROFILES, dump, restore } from './store.js';
 import * as E from './engine.js';
 import * as N from './nutrition.js';
+import * as X from './exdb.js';
 
 /* ---------- Utilidades y persistencia local ---------- */
 const $ = s => document.querySelector(s);
-const VERSION = 'v29';
+const VERSION = 'v30';
 const esc = t => String(t).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 await hydrate(); // IndexedDB → caché en memoria
 const localIso = t => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
@@ -143,24 +144,16 @@ const lockedToast = () => toast(`🔒 Plan bloqueado hasta el ${fmtLong(S.planLo
 // Series de la última semana por grupo (para respetar el MRV en tiempo real).
 const weekDone = k => [...ALL, ...Object.values(CEX)].filter(e => MAP[e.m] === k).reduce((n, e) => n + (S.logs[e.id] || []).filter(x => (Date.now() - new Date(x.d)) / 864e5 < 7 && x.t !== 'w').length, 0);
 // Catálogo: SIEMPRE 2 ejercicios por músculo (principal + complementario).
-const CATALOG = {
-  pecho: ['Press inclinado con mancuernas 4×8-10', 'Aperturas en polea 3×12-15'],
-  espalda: ['Jalón al pecho 4×8-12', 'Remo con apoyo pectoral 4×8-12'],
-  hombros: ['Press militar en máquina 3×8-10', 'Elevaciones laterales en polea 4×12-15'],
-  biceps: ['Curl inclinado con mancuernas 3×10-12', 'Curl predicador 3×10-12'],
-  triceps: ['Press francés con barra Z 3×8-10', 'Extensión de tríceps en polea 3×10-12'],
-  core: ['Crunch en polea 3×12-15', 'Elevación de piernas colgado 3×10-15'],
-  cuads: ['Prensa de piernas 4×8-12', 'Extensión de cuádriceps 3×12-15'],
-  isquios: ['Peso muerto rumano 3×8-10', 'Curl femoral sentado 4×8-12'],
-  gluteos: ['Hip thrust 4×8-12', 'Sentadilla búlgara 3×8-10'],
-  gemelos: ['Gemelo de pie 4×10-15', 'Gemelo sentado 3×12-20'],
-};
+// Catálogo: la selección por músculo sale de la base de ejercicios (exdb.js) según equipo, lugar y ajustes de comodidad.
+const avoidList = () => { const inj = String(S.trainingPreferences?.injuries || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ''); return Object.entries(X.AVOID).filter(([k]) => inj.includes(k)).flatMap(([, v]) => v); };
+const pickFor = (k, n = 2) => X.pickExercises(k, n, { equip: S.trainingPreferences?.equip || [], place: S.trainingPreferences?.place === 'casa' ? 'casa' : 'gimnasio', picks: S.exPicks || {}, avoid: avoidList() });
+const CATALOG = {}; Object.keys(X.DEFAULT_PICKS).forEach(k => Object.defineProperty(CATALOG, k, { get: () => pickFor(k), enumerable: true }));
 const PRESETS = { Push: ['pecho', 'hombros', 'triceps'], Pull: ['espalda', 'biceps'], Piernas: ['cuads', 'isquios', 'gluteos', 'gemelos'] };
-const LABEL = { pecho: 'Pecho', espalda: 'Espalda', hombros: 'Hombro', biceps: 'Bíceps', triceps: 'Tríceps', core: 'Core', cuads: 'Cuádriceps', isquios: 'Isquios', gluteos: 'Glúteo', gemelos: 'Gemelo' };
+const LABEL = X.LABEL;
 const clean = n => n.replace(/\s*\d+\s*[x×]\s*[\d-]+.*$/i, '').trim();
 const slug = n => n.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-const CEX = {}; // ejercicios del catálogo con id estable (para registrar series y autorregulación)
-Object.entries(CATALOG).forEach(([k, l]) => l.forEach((full, i) => { const n = clean(full); CEX['c-' + slug(n)] = { id: 'c-' + slug(n), n, m: LABEL[k], k, alt: [clean(l[1 - i])], sets: +(full.match(/(\d+)\s*[x×]/)?.[1]) || 3, rng: full.match(/[x×]\s*([\d-]+)/)?.[1] || '8-12', fin: i === 1 }; }));
+const CEX = {}; // ejercicios con id estable (para registrar series y autorregulación)
+X.EXDB.forEach(e => { CEX[e.id] = { ...e, alt: [], fin: false }; });
 // Orden estratégico: músculos grandes primero (los priorizados antes que todos); compuesto pesado → aislamiento (finalizador).
 const ORDER = ['cuads', 'isquios', 'gluteos', 'espalda', 'pecho', 'hombros', 'triceps', 'biceps', 'gemelos', 'core'];
 const strategicOrder = ks => { const by = a => [...a].sort((x, y) => ORDER.indexOf(x) - ORDER.indexOf(y)); return [...by(ks.filter(k => S.focus.includes(k))), ...by(ks.filter(k => !S.focus.includes(k)))]; };
@@ -206,7 +199,7 @@ const S = {
   nutritionChat: freshNutritionChat,
   nutritionHistory: store.get('nutritionChatHistory', []),
   nutritionBusy: false,
-  menuDay: (new Date().getDay() + 6) % 7, menuSeed: store.get('menuSeed', 0), menuWeek: 0, menuWeekSeen: store.get('menuWeekSeen', ''), pdfMonth: store.get('pdfMonth', ''), badgesSeen: store.get('badgesSeen', null),
+  menuDay: (new Date().getDay() + 6) % 7, menuSeed: store.get('menuSeed', 0), exPicks: store.get('exPicks', {}), recNotes: store.get('recNotes', {}), recIgnore: store.get('recIgnore', {}), swapsBy: store.get('swapsBy', {}), cookDays: store.get('cookDays', 0), batchIdx: 0, comfortUntil: store.get('comfortUntil', ''), trophiesSeen: store.get('trophiesSeen', null), wz: { step: 1, d: store.get('wzDraft', {}) }, menuWeek: 0, menuWeekSeen: store.get('menuWeekSeen', ''), pdfMonth: store.get('pdfMonth', ''), badgesSeen: store.get('badgesSeen', null),
 };
 if (!S.trainingPlan.length) {
   S.trainingPlan = [
@@ -370,20 +363,16 @@ const DROP_REPS = [8, 12, 16];
 const isDone = id => !!S.doneEx[S.routineDate]?.[id];
 const setLabel = t => (t === 'w' ? 'Calentamiento' : t === 'drop' ? '⬇ Drop' : `Serie ${t || '·'}`);
 /** Descanso según ejercicio (pesado/aislamiento), reps, RIR y tipo de serie. */
+/** Descanso tras una serie: depende del ejercicio (pesado/compuesto/aislamiento), reps, RIR, número de serie y objetivo. */
 function restPlan({ id, t, r, rir, drop }) {
-  if (t === 'w') return { sec: 45, why: 'Calentamiento: descanso corto' };
-  const heavy = HEAVY.test(exById(id)?.n || '');
-  let sec = heavy ? 120 : 75, why = heavy ? 'Compuesto pesado' : 'Aislamiento';
-  if (r <= 6) { sec += 30; why += ' + pocas reps'; } else if (r >= 15) sec -= 15;
-  if (rir <= 0) { sec += 30; why += ' + al fallo'; } else if (rir === 1) sec += 15; else if (rir >= 3) sec -= 15;
-  if (drop === 'end') { sec += 45; why = 'Cierre del drop set: fatiga alta'; }
-  return { sec: Math.max(30, Math.round(sec / 5) * 5), why: 'Descanso · ' + why };
+  const sec = X.restFor(exById(id), { r, rir, setNo: t === 'w' ? 0 : +t || 1, warm: t === 'w', drop: drop || '', goal: S.trainingPreferences?.goal });
+  return { sec: sec.sec, why: 'Descanso · ' + sec.why };
 }
-/** Descanso al pasar al siguiente ejercicio: según el que acabas y el que sigue. */
+/** Descanso al pasar al siguiente ejercicio: según el que acabas (su última serie) y el que sigue. */
 function transitionPlan(cur, nxt) {
-  const mk = e => e.k || MAP[e.m], same = mk(cur) === mk(nxt), base = HEAVY.test(cur.n) ? 120 : 75;
-  const sec = Math.max(45, Math.round((base * (same ? 1 : 0.6) + (HEAVY.test(nxt.n) ? 30 : 15)) / 5) * 5);
-  return { sec, why: `Siguiente: ${nxt.n} · ${same ? 'mismo músculo, recupera' : 'cambio de músculo, prepara la máquina'}` };
+  const l = (S.logs[cur.id] || []).filter(x => x.d === today() && x.t !== 'w' && x.t !== 'drop').at(-1);
+  const last = l ? X.restFor(cur, { r: l.r, rir: l.rir, setNo: 2 }) : { sec: 75 };
+  return X.transitionFor(cur, nxt, last);
 }
 const dropBanner = (id, p) => `<div class="card on mt-3"><div class="font-bold neon">⬇ DROP SET · descenso ${p.step + 1}/3</div>
   <div class="text-sm mt-1">Baja a <b>${p.ws[p.step]} kg</b> (−20 %) y haz <b>${DROP_REPS[p.step]} reps al fallo</b>. Descanso: <b>ninguno</b>, solo cambia el peso (≈10 s).</div>
@@ -391,10 +380,13 @@ const dropBanner = (id, p) => `<div class="card on mt-3"><div class="font-bold n
   <button class="btn fill w-full mt-2" data-act="dropsave" data-id="${id}">Guardar descenso</button></div>
   <button class="underline text-xs text-zinc-500 mt-2" data-act="dropskip" data-id="${id}">Cancelar drop set</button></div>`;
 /* ---------- v24: último peso, PR cercano, descarga activa, agua/creatina, favoritos, reporte, meta ---------- */
-const exAdvice = id => { const prev = S.swaps[id] ? [] : prevSets(id); return deloadOn() ? E.deload(prev) : E.regulate(prev, mesoWeek(), S.meso.weeks); };
+const swapHint = id => { const o = S.swapsBy[today()]; if (!o) return null; for (const k in o) if (o[k].to === id) return o[k]; return null; };
+const exAdvice = id => { const prev = prevSets(id), h = !prev.length && swapHint(id);
+  if (h && h.w != null) return { action: 'mantener', w: h.w, note: `Peso de tanteo por cambio de ejercicio (estimado desde ${h.fromName}): empieza aquí y ajusta a RIR 2-3.` };
+  return deloadOn() ? E.deload(prev) : E.regulate(prev, mesoWeek(), S.meso.weeks); };
 const lastPill = id => { const l = (S.logs[id] || []).filter(x => x.t !== 'w' && x.t !== 'drop').at(-1); if (!l) return '';
   return `<button class="last-pill" data-act="uselast" data-id="${id}" data-w="${l.w}" data-r="${l.r}" aria-label="Usar el último peso">↺ Último: <b>${l.w} kg</b> × ${l.r} · ${l.d === today() ? 'hoy' : l.d.slice(5)}</button>`; };
-const prBox = (id, sg) => { if (!sg || sg.w == null || raveOn() || deloadOn() || S.swaps[id]) return '';
+const prBox = (id, sg) => { if (!sg || sg.w == null || raveOn() || deloadOn() || swapHint(id)) return '';
   const pv = prevSets(id), r = pv.length ? Math.round(pv.reduce((n, s) => n + s.r, 0) / pv.length) : 8, h = E.prHint(S.logs[id] || [], sg.w, r);
   return h ? `<div class="pr-hint ${h.kind}">${esc(h.text)}</div>` : ''; };
 const flashCls = id => (S.flashId === id && Date.now() < S.flashUntil ? 'sv' + (S.flashN % 2) : '');
@@ -440,28 +432,38 @@ const titanSheet = () => {
   <button class="btn fill w-full mt-4" data-act="closemodal">¡A por la próxima semana!</button></div></div>`; };
 const maybeTitan = () => { if (new Date().getDay() !== 0 || store.get('titanSeen') === today() || !S.onboarded || S.modal || !allRows().length) return; S.modal = { type: 'titan' }; };
 
+/** Serie final: muestra el peso de la serie anterior y, con Drop set activo, a cuánto bajar. */
+const dropWs = w => { const ws = []; let x = w; for (let i = 0; i < 3; i++) { x = E.r25(x * 0.8); ws.push(x); } return ws; };
+const lastSetBox = (e, work, plan, dv) => {
+  if (work.length !== plan - 1 || !work.length) return '';
+  const l = work.at(-1), ws = dropWs(l.w);
+  return `<div class="card !p-2 mt-2 text-sm on"><b class="neon">🔔 ÚLTIMA SERIE (${plan} de ${plan})</b>
+    <div class="text-zinc-300">Tu serie anterior: <b>${l.w} kg × ${l.r}</b> (RIR ${l.rir}).${l.rir >= 3 ? ' Te sobró margen: puedes subir un poco.' : l.rir <= 0 ? ' Fue al fallo: repite el peso.' : ''}</div>
+    ${dv ? `<div class="mt-1">⬇ <b>Drop set ON</b>: al terminar baja a <b>${ws[0]} kg</b> → <b>${ws[1]} kg</b> → <b>${ws[2]} kg</b> (−20 % cada vez), sin descansar.</div>` : '<div class="text-xs text-zinc-500 mt-1">Activa ⬇ Drop set si quieres cerrar el músculo al límite.</div>'}</div>`;
+};
 function exCard(e) {
-  const name = S.swaps[e.id] || e.n, sets = todaySets(e.id), open = S.open === e.id, dv = S.devil[e.id], done = isDone(e.id), dp = S.drop[e.id];
+  const name = e.n, sets = todaySets(e.id), open = S.open === e.id, dv = S.devil[e.id], done = isDone(e.id), dp = S.drop[e.id];
   const work = sets.filter(x => x.t !== 'w' && x.t !== 'drop'), plan = e.sets || 3;
   const sg = open ? exAdvice(e.id) : null;
   return `<div class="card ${open ? 'on' : ''} ${done ? 'done' : ''}">
   <div class="flex justify-between items-start" data-act="toggle" data-id="${e.id}">
-    <div><div class="font-bold text-lg leading-tight">${done ? '✅ ' : ''}${esc(name)}${S.swaps[e.id] ? ' <span class="text-xs neon">SWAP</span>' : ''}</div>
+    <div><div class="font-bold text-lg leading-tight">${done ? '✅ ' : ''}${esc(name)}${e.swapFrom ? ' <span class="text-xs neon">SWAP</span>' : ''}</div>
     <div class="text-xs text-zinc-500">${e.m}${e.sets ? ` · plan ${e.sets}×${e.rng}` : ''} · ${work.length}/${plan} series${e.fin ? ' · <span class="neon">🔥 finalizador</span>' : ''}</div></div><span class="neon">${open ? '▾' : '▸'}</span></div>
   ${open ? `
   ${sets.map((x, i) => `<div class="text-sm text-zinc-400 mt-2 ${S.fresh === e.id && i === sets.length - 1 ? 'pop' : ''}">${setLabel(x.t)} · ${x.w} kg × ${x.r}${x.t === 'w' ? '' : ` · RIR ${x.rir}`}${x.fail && x.fail !== 'Músculo objetivo' ? ` · limitó: ${x.fail}` : ''}</div>`).join('')}
   <div class="card !p-2 mt-2 text-sm ${sg.action === 'descarga' ? 'on' : ''}"><b class="neon">${sg.action.toUpperCase()}</b>${sg.w ? ' · ' + sg.w + ' kg' : ''}<div class="text-zinc-400">${esc(sg.note)}</div></div>
   ${spark(e1h(e.id))}
   ${prBox(e.id, sg)}
+  ${lastSetBox(e, work, plan, dv)}
   ${dp ? dropBanner(e.id, dp) : `
-  ${lastPill(e.id)}<div class="flex gap-2 mt-3">${['w', 'r'].map(f => `<div class="step"><button data-act="step" data-f="${f}-${e.id}" data-s="${f === 'w' ? -2.5 : -1}" aria-label="menos">−</button><input id="${f}-${e.id}" type="number" inputmode="${f === 'w' ? 'decimal' : 'numeric'}" placeholder="${f === 'w' ? 'kg' : 'reps'}" ${f === 'w' && sg.w != null ? `value="${sg.w}"` : ''}><button data-act="step" data-f="${f}-${e.id}" data-s="${f === 'w' ? 2.5 : 1}" aria-label="más">＋</button></div>`).join('')}</div>
+  ${lastPill(e.id)}<div class="flex gap-2 mt-3">${['w', 'r'].map(f => `<div class="step"><button data-act="step" data-f="${f}-${e.id}" data-s="${f === 'w' ? -2.5 : -1}" aria-label="menos">−</button><input id="${f}-${e.id}" type="${f === 'w' ? 'text' : 'number'}" inputmode="${f === 'w' ? 'decimal' : 'numeric'}" ${f === 'w' ? 'pattern="[0-9]*[.,]?[0-9]*"' : ''} placeholder="${f === 'w' ? 'kg (admite decimales)' : 'reps'}" ${f === 'w' && sg.w != null ? `value="${sg.w}"` : ''}><button data-act="step" data-f="${f}-${e.id}" data-s="${f === 'w' ? 2.5 : 1}" aria-label="más">＋</button></div>`).join('')}</div>
   <button class="btn fill w-full mt-2 ${flashCls(e.id)}" data-act="logset" data-id="${e.id}">Registrar serie ${work.length + 1}</button>`}
   <div class="flex gap-2 mt-2">
     <button class="btn flex-1 ${dv ? 'fill' : ''}" data-act="devil" data-id="${e.id}">⬇ Drop set${dv ? ' ON' : ''}</button>
     <button class="btn ghost flex-1" data-act="exercisevideo" data-exercise="${esc(name)}" aria-label="Ver cómo se hace ${esc(name)}">▶ Técnica</button>
     <button class="btn ghost flex-1" data-act="swap" data-id="${e.id}">Smart Swap</button></div>
-  ${dv && !dp ? '<div class="text-xs text-zinc-400 mt-2">⬇ Drop set activo: registra tu serie principal al fallo y te digo a cuánto bajar (−20 %, 3 descensos: 8 → 12 → 16 reps) y que no descanses.</div>' : ''}
-  ${e.fin && !dv ? '<div class="text-xs neon mt-2">🔥 Finalizador: activa Drop set en tu última serie para dejar el músculo al límite.</div>' : ''}
+  ${dv && !dp && work.length + 1 < plan ? `<div class="text-xs text-zinc-400 mt-2">⬇ Drop set activo: se hace en tu <b>última serie</b> (serie ${plan}). Antes, series normales.</div>` : ''}
+  ${e.fin && !dv ? '<div class="text-xs neon mt-2">🔥 Finalizador: activa Drop set y se aplicará en tu última serie para dejar el músculo al límite.</div>' : ''}
   ${sets.length ? `<button class="btn ${!done && work.length >= plan ? 'fill' : 'ghost'} w-full mt-2" data-act="${done ? 'undone' : 'doneex'}" data-id="${e.id}">${done ? '↩ Reabrir ejercicio' : '✅ Ejercicio terminado'}</button>` : ''}` : ''}
   </div>`;
 }
@@ -614,6 +616,13 @@ const INTAKE_Q = (miss, needDays, needLw, needPhase) => { const q = [];
   const E = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣'];
   return '🆕 Configuración inicial (solo se pide esta primera vez, para definir tu objetivo y tu rutina). Antes de armar y bloquear tu rutina respóndeme esto, todo en un solo mensaje:\n' + q.map((x, i) => `${E[i]} ${x}`).join('\n'); };
 const routineExercisesForDate = iso => S.routineEdits[iso] || [];
+/** Tarjetas del día: aplica el Smart Swap de esa fecha (ejercicio propio con su historial) y marca el finalizador (último aislamiento de un músculo). */
+const cardsFor = iso => {
+  const base = routineExercisesForDate(iso).map(exByName).filter(Boolean);
+  return base.map((e, i) => { const sw = S.swapsBy[iso]?.[e.id], alt = sw && exById(sw.to), x = alt ? { ...alt, swapFrom: e.id } : e;
+    const lastOfMuscle = !base.slice(i + 1).some(o => o.k === e.k);
+    return { ...x, fin: x.role === 'i' && lastOfMuscle && base.slice(0, i).some(o => o.k === e.k) }; });
+};
 
 const dayState = iso => {
   if (Object.values(S.logs).some(l => l.some(x => x.d === iso))) return 'done';
@@ -685,10 +694,35 @@ const nutritionCoachCard = () => {
 const weekNo = iso => Math.floor(Date.parse(iso + 'T00:00:00Z') / 864e5 / 7);
 const weekSeed = mon => weekNo(mon) + (+mon.slice(0, 4) * 12 + +mon.slice(5, 7)) * 3 + (S.menuSeed || 0); // semana a semana + otro orden cada mes
 const menuMonday = off => shiftIsoDate(mondayOf(today()), 7 * off);
-const currentMenu = (off = 0) => N.generateMenu(nutritionTarget(), S.nutritionPreferences, weekSeed(menuMonday(off)));
+/* ---------- Tandas de cocina: cocinas el día de descanso y esa comida cubre los días hasta la siguiente cocinada ---------- */
+const dayNo = iso => Math.floor(Date.parse(iso + 'T12:00:00Z') / 864e5);
+const hasTrainPlan = () => !!(S.trainingConfigured && S.trainingPlan?.length);
+const isTrain = iso => hasTrainPlan() && !!routineSessionForDate(iso);
+const cookMode = () => { const sch = S.trainingSchedule || {}; return S.cookDays >= 2 ? { fixed: S.cookDays } : hasTrainPlan() && sch.cycle && sch.restDays >= 1 ? { rest: true } : { fixed: 3 }; };
+const planStart = () => S.trainingSchedule?.startDate || mondayOf(today());
+const planAnchor = () => { if (!hasTrainPlan()) return mondayOf(today()); const st = planStart(); for (let i = 0; i < 8; i++) { const d = shiftIsoDate(st, i); if (!isTrain(d)) return d; } return st; };
+const fixedBatch = (iso, a, n) => { const start = shiftIsoDate(a, Math.floor((dayNo(iso) - dayNo(a)) / n) * n); return { start, end: shiftIsoDate(start, n - 1), n }; };
+function batchOf(iso) {
+  const m = cookMode(); if (m.fixed) return fixedBatch(iso, planAnchor(), m.fixed);
+  const st = planStart(); if (iso < st) return fixedBatch(iso, st, 3);
+  const isStart = d => d >= st && !isTrain(d) && (d === st || isTrain(shiftIsoDate(d, -1)));
+  let s0 = iso, g = 0; while (g++ < 16 && s0 > st && !isStart(s0)) s0 = shiftIsoDate(s0, -1); if (!isStart(s0)) s0 = st;
+  let e = shiftIsoDate(s0, 1), g2 = 0; while (g2++ < 14 && !isStart(e)) e = shiftIsoDate(e, 1); if (!isStart(e)) e = shiftIsoDate(s0, 4);
+  const end = shiftIsoDate(e, -1); return { start: s0, end, n: dayNo(end) - dayNo(s0) + 1 };
+}
+const BM = {};
+const batchMenu = b => { const key = [b.start, b.n, S.menuSeed || 0, S.target?.kcal, JSON.stringify(S.nutritionPreferences)].join('|');
+  return BM[key] ||= N.generateMenu(nutritionTarget(), S.nutritionPreferences, weekSeed(mondayOf(b.start)) + (dayNo(b.start) % 97), { count: b.n, blockOf: () => 0 }); };
+const menuForDate = iso => { const b = batchOf(iso), mm = batchMenu(b), idx = dayNo(iso) - dayNo(b.start); return { b, idx, mm, meals: mm.days[idx] || [] }; };
+const currentMenu = (off = 0) => { const mon = menuMonday(off), days = [], notes = new Set(), prep = new Set();
+  for (let i = 0; i < 7; i++) { const f = menuForDate(shiftIsoDate(mon, i)); days.push(f.meals); f.mm.notes.forEach(n => notes.add(n)); f.mm.prep.forEach(x => prep.add(x)); }
+  return { days, notes: [...notes], prep: [...prep] }; };
+const longDay = iso => new Date(iso + 'T12:00:00').toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'short' }).replace('.', '');
+const batchLabel = b => `${shortDate(b.start)} → ${shortDate(b.end)}`;
+const cookCtx = () => { try { if (!S.target) return null; const b = batchOf(today()), c = N.cookBatch(batchMenu(b).days, batchLabel(b)); return [`Tanda ${batchLabel(b)} (se cocina el ${b.start}, ${b.n} días): ${c.tasks.join(' ')}`]; } catch { return null; } };
 const shortDate = iso => new Date(iso + 'T12:00:00').toLocaleDateString('es-CO', { day: 'numeric', month: 'short' }).replace('.', '');
 const weekBanner = () => { const k = mondayOf(today()); if (!S.menuWeekSeen) { S.menuWeekSeen = k; store.set('menuWeekSeen', k); return ''; }
-  return S.menuWeekSeen === k ? '' : `<div class="card on banner"><div class="font-bold">🔄 ¡Nueva semana, nuevo menú!</div><div class="text-sm text-zinc-400 mt-1">Cambié recetas y proteínas de esta semana (siempre con tus macros) y actualicé la lista de compras y la cocina del domingo.</div><button class="btn fill w-full mt-2" data-act="weekseen">Entendido</button></div>`; };
+  return S.menuWeekSeen === k ? '' : `<div class="card on banner"><div class="font-bold">🔄 ¡Nueva semana, nuevo menú!</div><div class="text-sm text-zinc-400 mt-1">Cambié recetas y proteínas de esta semana (siempre con tus macros) y actualicé las tandas de cocina y sus listas de compras.</div><button class="btn fill w-full mt-2" data-act="weekseen">Entendido</button></div>`; };
 const MONTHS = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
 const pdfCard = () => { if (!S.target || !N.ready(S.nutritionPreferences, true)) return ''; const done = S.pdfMonth === today().slice(0, 7), mes = MONTHS[+today().slice(5, 7) - 1];
   return `<div class="card ${done ? '' : 'on'} pdfcard"><div class="flex justify-between items-center gap-2"><div class="min-w-0"><div class="font-bold">📄 Plan de ${mes} en PDF</div><div class="text-xs text-zinc-400 mt-1">${done ? 'Ya lo descargaste este mes. El del próximo mes aparece aquí solo.' : '4 semanas con comidas distintas cada semana: recetas, horarios, entrenos y lista de compras. Cada mes sale uno nuevo.'}</div></div><button class="btn ${done ? 'ghost' : 'fill'} !px-3" data-act="pdfmonth">${done ? 'Otra vez' : 'Descargar'}</button></div></div>`; };
@@ -698,7 +732,7 @@ function monthData() {
   const t = nutritionTarget(), prefs = S.nutritionPreferences, mon0 = shiftIsoDate(mondayOf(today()), [0, 6].includes(new Date().getDay()) ? 7 : 0), sch = S.trainingSchedule, hasPlan = !!S.trainingPlan?.length;
   const DN = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
   const weeks = [0, 1, 2, 3].map(w => {
-    const mon = shiftIsoDate(mon0, 7 * w), menu = N.generateMenu(t, prefs, weekSeed(mon)), seen = new Set(); let trainN = 0;
+    const mon = shiftIsoDate(mon0, 7 * w), menu = (() => { const days = [], notes = new Set(); for (let i = 0; i < 7; i++) { const f = menuForDate(shiftIsoDate(mon, i)); days.push(f.meals); f.mm.notes.forEach(n => notes.add(n)); } return { days, notes: [...notes] }; })(), seen = new Set(); let trainN = 0;
     const days = menu.days.map((ms, i) => {
       const iso = shiftIsoDate(mon, i), ses = hasPlan ? routineSessionForDate(iso) : null; if (ses) trainN++;
       const meals = ms.map(m => { const first = !seen.has(m.id); seen.add(m.id);
@@ -706,7 +740,9 @@ function monthData() {
       return { name: DN[i], date: shortDate(iso), train: ses ? `Entreno: ${ses.day}` : hasPlan ? 'Descanso' : '', meals, tot: meals.reduce((a, m) => ({ k: a.k + m.k, p: a.p + m.p, c: a.c + m.c, f: a.f + m.f }), { k: 0, p: 0, c: 0, f: 0 }) };
     });
     return { label: `${shortDate(mon)} - ${shortDate(shiftIsoDate(mon, 6))}`, summary: `Meta diaria: ${t.kcal} kcal · P ${t.p} g · C ${t.c} g · G ${t.f} g${hasPlan ? ` · ${trainN} entrenos esta semana` : ''}. ${menu.notes.join(' ')}`,
-      groceries: N.groceries(menu), cook: N.cookPlan(menu, prefs), days };
+      ...(() => { const seenB = new Set(), shop = [], cook = []; for (let i = 0; i < 7; i++) { const b = batchOf(shiftIsoDate(mon, i)); if (seenB.has(b.start) || b.start < mon) continue; seenB.add(b.start);
+        const lab = batchLabel(b), cb = N.cookBatch(batchMenu(b).days, lab); shop.push({ label: `Tanda ${lab} · ${b.n} días`, groceries: cb.groceries }); cook.push({ day: `Cocinas el ${longDay(b.start)}`, title: `para ${b.n} días (${lab})`, tasks: cb.tasks }); }
+        return { shop, cook }; })(), days };
   });
   const end = shiftIsoDate(mon0, 27);
   return { name: PROFILES[profile] || 'Atleta', range: `${shortDate(mon0)} - ${shortDate(end)} ${end.slice(0, 4)}`, generated: `${shortDate(today())} ${today().slice(0, 4)}`, target: t,
@@ -719,28 +755,42 @@ function downloadPdf(bytes, name) {
 }
 const fmtHour = t => { const [h, mi] = t.split(':').map(Number); return `${((h + 11) % 12) + 1}:${String(mi).padStart(2, '0')} ${h < 12 ? 'a. m.' : 'p. m.'}`; };
 const PREP = { nevera: m => `🧊 Nevera · ${m} min`, cocinar: m => `🍳 ${m} min`, rapido: m => `⚡ ${m} min`, fuera: () => '🍽️ Restaurante' };
+const cookBatchCard = () => {
+  if (!S.target) return '';
+  const batches = []; let b = batchOf(today()); batches.push(b); for (let i = 1; i < 3; i++) { b = batchOf(shiftIsoDate(b.end, 1)); batches.push(b); }
+  const sel = Math.min(2, S.batchIdx || 0), cur = batches[sel], mm = batchMenu(cur), from = sel === 0 ? Math.max(0, Math.min(cur.n - 1, dayNo(today()) - dayNo(cur.start))) : 0, days = mm.days.slice(from);
+  const cb = N.cookBatch(days, batchLabel(cur)), m = cookMode(), sch = S.trainingSchedule || {}, GL = { prot: 'Proteínas', supp: 'Suplementos', dairy: 'Lácteos', carb: 'Carbohidratos', veg: 'Verduras', fat: 'Grasas' };
+  const why = m.rest ? `Entrenas ${sch.workDays} y descansas ${sch.restDays}: <b>cocinas el día de descanso</b> y esa comida te cubre hasta la siguiente cocinada.` : `Cocinas cada <b>${cur.n} días</b>.`;
+  const chip = (n, l) => `<button class="chip ${(S.cookDays || 0) === n ? 'on' : ''}" data-act="cookdays" data-n="${n}">${l}</button>`;
+  const strip = Array.from({ length: cur.n }, (_, i) => { const d = shiftIsoDate(cur.start, i); return `<span class="mealtag" style="${d === today() ? 'border-color:#ff2b57' : ''}">${shortDate(d)} ${i === 0 ? '🍳' : isTrain(d) ? '💪' : '😴'}</span>`; }).join(' ');
+  return `<div class="card on"><div class="font-bold text-lg">👩‍🍳 Tandas de cocina</div><div class="text-sm text-zinc-400 mt-1">${why}</div>
+    <div class="chips mt-2">${[0, 1, 2].map(i => `<button class="chip ${sel === i ? 'on' : ''}" data-act="batchsel" data-i="${i}">${i === 0 ? 'Esta tanda' : i === 1 ? 'Siguiente' : 'Después'}</button>`).join('')}</div>
+    <div class="mt-2"><div class="neon font-bold">🍳 Cocinas el ${esc(longDay(cur.start))}${cur.start === today() ? ' · ¡HOY!' : ''}</div><div class="text-xs text-zinc-400">Para ${days.length} día${days.length > 1 ? 's' : ''}${from ? ` (quedan ${days.length} de ${cur.n} de esta tanda)` : ''}: ${strip}</div></div>
+    <div class="neon text-sm font-bold mt-3">Qué cocinar</div><ul class="strat">${cb.tasks.map(x => `<li>${esc(x)}</li>`).join('')}</ul>
+    <details open class="mt-2"><summary class="font-bold" style="min-height:40px;display:flex;align-items:center">🛒 Lista de compras de esta tanda (${days.length} día${days.length > 1 ? 's' : ''})</summary><div class="text-xs text-zinc-500 mb-1">Exacta para los días cocinados · pesos crudos aprox. · 1 persona.</div>
+    ${Object.keys(GL).map(g => { const l = cb.groceries.filter(x => x.group === g); return l.length ? `<div class="text-xs neon uppercase mt-2">${GL[g]}</div>${l.map(x => `<div class="ctl-row"><span>${esc(x.n)}${x.tier === 1 ? ' <span class="text-xs text-zinc-500">· económico</span>' : ''}</span><b>${x.amount}</b></div>`).join('')}` : ''; }).join('')}</details>
+    <div class="text-xs text-zinc-500 mt-2">Cocino cada: <span class="chips" style="display:inline-flex">${chip(0, 'Automático')}${chip(3, '3 días')}${chip(4, '4 días')}${chip(7, '7 días')}</span></div></div>`;
+};
 const planCards = () => {
   const wk = S.menuWeek || 0, prefs = S.nutritionPreferences, t = nutritionTarget(), menu = currentMenu(wk), day = Math.min(S.menuDay, 6), meals = menu.days[day] || [];
   const DN = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'], tot = meals.reduce((a, m) => ({ k: a.k + m.k, p: a.p + m.p, c: a.c + m.c, f: a.f + m.f }), { k: 0, p: 0, c: 0, f: 0 });
   const strat = N.strategy({ target: t, prefs, goal: S.profile?.goal || 'maint', trainDays: S.trainingSchedule?.days || 3 }), groc = N.groceries(menu);
-  const cookHtml = N.cookPlan(menu, prefs).map(b => `<div class="mt-2"><div class="neon text-sm font-bold">${esc(b.day)} · ${esc(b.title)}</div><ul class="strat">${b.tasks.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>`).join('');
+  
   const GL = { prot: 'Proteínas', supp: 'Suplementos', dairy: 'Lácteos', carb: 'Carbohidratos', veg: 'Verduras', fat: 'Grasas' };
   return `${pdfCard()}<div class="card on"><div class="font-bold text-lg">🎯 Tu estrategia</div><div class="text-xs text-zinc-500 mb-1">Hecha con tus respuestas · ${t.kcal} kcal · P ${t.p} · C ${t.c} · G ${t.f}</div>
     <ul class="strat">${strat.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>
   ${weekBanner()}<div class="card"><div class="flex justify-between items-center gap-2"><div class="font-bold text-lg">🍽️ Menú de la semana</div><button class="chip !px-3" data-act="menuregen">🔄 Otra variante</button></div>
     <div class="weeknav"><button class="icon-btn" data-act="menuweek" data-n="-1" ${wk <= 0 ? 'disabled' : ''}>‹</button><div class="text-center"><b>${wk === 0 ? 'Esta semana' : wk === 1 ? 'Próxima semana' : `En ${wk} semanas`}</b><div class="text-xs text-zinc-500">${shortDate(menuMonday(wk))} - ${shortDate(shiftIsoDate(menuMonday(wk), 6))} · cambia solo cada lunes</div></div><button class="icon-btn" data-act="menuweek" data-n="1" ${wk >= 3 ? 'disabled' : ''}>›</button></div>
     <div class="daytabs">${DN.map((d, i) => `<button class="chip ${day === i ? 'on' : ''}" data-act="menuday" data-i="${i}">${d}</button>`).join('')}</div>
+    ${(() => { const iso = shiftIsoDate(menuMonday(wk), day), f = menuForDate(iso); return `<div class="text-xs text-zinc-400 mb-1">${f.idx === 0 ? `🍳 <b class="neon">Día de cocina</b>: cocinas para ${f.b.n} días (hasta el ${shortDate(f.b.end)})` : `🥡 Comes lo cocinado el ${shortDate(f.b.start)}`}${isTrain(iso) ? ' · 💪 entrenas' : hasTrainPlan() ? ' · 😴 descanso' : ''}</div>`; })()}
     ${meals.map((m, i) => `<div class="meal"><div class="flex justify-between items-start gap-2"><div class="min-w-0"><div class="text-xs neon uppercase">${m.slot}${m.time ? ` · 🕗 ${fmtHour(m.time)}` : ''}</div><div class="font-bold leading-tight">${esc(m.name)}</div></div><span class="mealtag">${(PREP[m.prep] || PREP.cocinar)(m.mins)}</span></div>
       <div class="text-sm text-zinc-400 mt-1">${m.items.map(it => esc(it.text)).join(' · ')}</div>
       ${(m.steps || []).length ? `<details class="mt-1"><summary class="text-sm neon" style="min-height:36px;display:flex;align-items:center">📖 Ver preparación</summary><ol class="strat" style="list-style:decimal;padding-left:18px">${m.steps.map(x => `<li>${esc(x)}</li>`).join('')}</ol></details>` : ''}
       <div class="flex justify-between items-center mt-1"><span class="text-xs text-zinc-500">${m.k} kcal · P ${m.p} · C ${m.c} · G ${m.f}</span><button class="chip !px-3" data-act="mealadd" data-d="${day}" data-i="${i}">＋ Registrar</button></div></div>`).join('') || '<div class="text-sm text-zinc-500">No pude armar el menú con esas restricciones: amplía las proteínas o el tiempo.</div>'}
     <div class="text-xs text-zinc-400 mt-2">Día: <b class="text-white">${tot.k}</b> kcal · P ${tot.p} · C ${tot.c} · G ${tot.f} <span class="text-zinc-500">(meta ${t.kcal} · P ${t.p} · C ${t.c} · G ${t.f})</span></div>
     ${menu.notes.map(n => `<div class="text-xs text-zinc-500 mt-1">ℹ️ ${esc(n)}</div>`).join('')}
-    ${menu.prep.length ? `<details class="mt-2"><summary class="text-sm" style="min-height:40px;display:flex;align-items:center">🧊 Qué preparar en la nevera</summary><ul class="strat">${menu.prep.map(x => `<li>${esc(x)}</li>`).join('')}</ul><div class="text-xs text-zinc-500">Cocina por lotes (domingo y miércoles). Dura 3–4 días en nevera; congela el resto.</div></details>` : ''}</div>
-  <div class="card"><details open><summary class="font-bold text-lg" style="min-height:40px;display:flex;align-items:center">👩‍🍳 Cómo organizar y cocinar la semana</summary>${cookHtml}</details></div>
-  <div class="card"><details><summary class="font-bold text-lg" style="min-height:40px;display:flex;align-items:center">🛒 Lista de compras (7 días)</summary>
-    <div class="text-xs text-zinc-500 mb-1">Pesos crudos aproximados para 1 persona.</div>
-    ${Object.keys(GL).map(g => { const l = groc.filter(x => x.group === g); return l.length ? `<div class="text-xs neon uppercase mt-2">${GL[g]}</div>${l.map(x => `<div class="ctl-row"><span>${esc(x.n)}${x.tier === 1 ? ' <span class="text-xs text-zinc-500">· económico</span>' : ''}</span><b>${x.amount}</b></div>`).join('')}` : ''; }).join('')}</details></div>
+    ${menu.prep.length ? `<details class="mt-2"><summary class="text-sm" style="min-height:40px;display:flex;align-items:center">🧊 Qué preparar en la nevera</summary><ul class="strat">${menu.prep.map(x => `<li>${esc(x)}</li>`).join('')}</ul><div class="text-xs text-zinc-500">Cocina por tandas (mira «Tandas de cocina»). Dura 3–4 días en nevera; congela el resto.</div></details>` : ''}</div>
+  ${cookBatchCard()}
   <div class="card"><div class="flex justify-between items-center gap-2"><div class="text-sm text-zinc-400">¿Cambió algo (presupuesto, proteínas, tiempo)?</div><button class="chip !px-3" data-act="nutritiontab" data-tab="chat">Ajustar</button></div></div>`;
 };
 const coachPanel = () => `
@@ -811,7 +861,7 @@ const routineDayPanel = () => {
     ${rest ? '' : `${dayBuilder()}
     <div class="flex justify-between items-center mt-3"><span class="text-xs text-zinc-500">Ejercicios del día</span><button class="btn" data-act="addroutineexercise">＋ Añadir ejercicio</button></div>
     ${exercises.length ? '<div class="text-xs text-zinc-500 mt-2">Orden estratégico: músculos grandes y priorizados primero · compuesto pesado → aislamiento · el 🔥 finalizador va con drop set para llevar el músculo al límite.</div>' : ''}<div class="routine-exercise-list">${exercises.map((exercise, index) => `<div class="routine-exercise-row">
-      <span class="routine-exercise-name">${index + 1}. ${esc(exercise)}${exByName(exercise)?.fin ? ' <span class="text-xs neon">🔥 finalizador</span>' : ''}</span>
+      <span class="routine-exercise-name">${index + 1}. ${esc(exercise)}${cardsFor(iso)[index]?.fin ? ' <span class="text-xs neon">🔥 finalizador</span>' : ''}</span>
       <button class="icon-btn" data-act="exercisevideo" data-index="${index}" aria-label="Ver ${esc(exercise)}" title="Ver ejercicio">▶</button>
       <button class="icon-btn" data-act="editroutineexercise" data-index="${index}" aria-label="Editar ${esc(exercise)}" title="Editar">✎</button>
       <button class="icon-btn" data-act="removeroutineexercise" data-index="${index}" aria-label="Eliminar ${esc(exercise)}" title="Eliminar">×</button>
@@ -820,15 +870,33 @@ const routineDayPanel = () => {
 };
 
 const loggingCards = () => {
-  const cards = routineExercisesForDate(S.routineDate).map(exByName).filter(Boolean);
+  const cards = cardsFor(S.routineDate);
   if (!cards.length) return '';
   return `<div class="plan-title mt-3">Registrar series · ${cards.filter(c => isDone(c.id)).length}/${cards.length} terminados</div>${S.focus.length ? `<div class="text-xs text-zinc-500 mb-2">Enfoque semanal: ${S.focus.map(k => MUSCLES[k].n).join(' + ')}</div>` : ''}
   ${cards.map(exCard).join('')}
   <div class="text-xs text-zinc-600 mt-2">Semana ${mesoWeek()} de ${S.meso.weeks}: mantén los mismos ejercicios y sube carga o reps. <button class="underline" data-act="weeks">${S.meso.weeks} semanas (cambiar)</button> · <button class="underline" data-act="newmeso">reiniciar</button></div>`;
 };
+/* ---------- Recuperación: avisa si hoy tocas un músculo que aún no se recuperó ---------- */
+const recGuardCard = () => {
+  const iso = S.routineDate, ks = S.dayMuscles[iso] || [], note = S.recNotes[iso], out = [];
+  if (!S.dayRest[iso] && ks.length && !S.recIgnore[iso] && !Object.values(S.logs).some(l => l.some(x => x.d === iso))) {
+    const is = X.recoveryIssues(ks, iso, lastTrained(iso));
+    if (is.length) out.push(`<div class="card connbar bad mt-3"><div class="text-sm">🛡️ <b>Recuperación</b></div><div class="text-xs text-zinc-300 mt-1">${is.map(i => `${esc(MUSCLES[i.k].n)}: entrenado hace ${Math.round(i.hours / 24)} día${i.hours > 24 ? 's' : ''} (necesita ${i.need} h)`).join(' · ')}. Volver a cargarlo antes de tiempo baja tu progreso y sube el riesgo de lesión.</div>
+      <div class="flex gap-2 mt-2"><button class="btn fill flex-1" data-act="recfix">Quitar de hoy</button><button class="btn ghost flex-1" data-act="recskip">Entrenar igual</button></div></div>`);
+  }
+  if (note?.removed?.length) out.push(`<div class="card mt-3 text-sm">🛡️ Para que te recuperes, quité <b>${note.removed.map(k => esc(MUSCLES[k].n)).join(', ')}</b> de este día (se entrenó hace menos de ${X.REC_H[note.removed[0]]} h)${note.added?.length ? ` y puse <b>${note.added.map(k => esc(MUSCLES[k].n)).join(', ')}</b>, que ya están recuperados` : ''}. Los músculos quitados entran en su siguiente sesión.</div>`);
+  if (note?.warn?.length) out.push(`<div class="card mt-3 text-sm">⚠️ Tu esquema de días seguidos hace que <b>${note.warn.map(k => esc(MUSCLES[k].n)).join(', ')}</b> se repita sin descanso suficiente. Para recuperar mejor, usa un descanso entre sesiones o cambia a Torso/Pierna.</div>`);
+  return out.join('');
+};
+const planMuscles = () => [...new Set(S.trainingPlan.flatMap(x => x.m || musclesForSession(x.day)))];
+const comfortOn = () => !!S.trainingConfigured && !!S.comfortUntil && S.comfortUntil >= today();
+const comfortCard = () => !comfortOn() ? '' : `<div class="card on mt-3"><div class="font-bold neon">🛠️ Ajusta tu rutina a tu comodidad</div>
+  <div class="text-sm text-zinc-400 mt-1">Esta es tu única ventana para cambiar ejercicios (hasta el ${esc(fmtLong(S.comfortUntil))}). Elige el que te quede más cómodo: solo te muestro equivalentes del <b>mismo músculo y la misma función</b>, así la rutina mantiene su eficacia. Luego se bloquea.</div>
+  <div class="flex gap-2 mt-2"><button class="btn fill flex-1" data-act="comfort">Elegir ejercicios</button><button class="btn ghost flex-1" data-act="comfortdone">Así está bien</button></div></div>`;
 const trainingRoutinePanel = () => `<div class="routine-panel">
-  
+  ${comfortCard()}
   ${deloadCard()}
+  ${recGuardCard()}
   ${routineDayPicker()}
   ${routineDayPanel()}
   ${loggingCards()}
@@ -836,6 +904,38 @@ const trainingRoutinePanel = () => `<div class="routine-panel">
 </div>`;
 
 /** Entrevista obligatoria: la app no se abre hasta que el coach conoce cómo entrena el usuario. */
+
+/* ---------- Asistente inicial: 3 bloques de preguntas antes de generar la primera rutina ---------- */
+const WZ_DAYS = { c31: { l: '3 entrenos + 1 descanso (ciclo)', days: 3, cycle: true, rest: 1 }, c41: { l: '4 entrenos + 1 descanso (ciclo)', days: 4, cycle: true, rest: 1 },
+  w3: { l: '3 días por semana', days: 3 }, w4: { l: '4 días por semana', days: 4 }, w5: { l: '5 días por semana', days: 5 }, w6: { l: '6 días por semana', days: 6 } };
+const WZ_EQ = { mancuerna: 'Mancuernas', polea: 'Polea', maquina: 'Máquinas', barra: 'Barra libre', smith: 'Smith', peso: 'Peso corporal' };
+const wzd = () => S.wz.d;
+const wzSave = () => store.set('wzDraft', S.wz.d);
+const wzCapture = () => { for (const [k, id] of [['kg', 'wz-kg'], ['h', 'wz-h'], ['age', 'wz-a']]) { const el = $('#' + id); if (el && String(el.value).trim() !== '') wzd()[k] = val(id); } };
+const wchip = (k, v, l) => `<button class="chip ${wzd()[k] === v ? 'on' : ''}" data-act="wzset" data-k="${k}" data-v="${esc(v)}">${l}</button>`;
+const wzView = () => {
+  const d = wzd(), st = S.wz.step, home = d.place === 'casa';
+  const head = `<div class="text-xs text-zinc-500 uppercase tracking">Paso obligatorio · ${st} de 3</div><div class="wz-bar"><i style="width:${st * 33.4}%"></i></div>`;
+  let body;
+  if (st === 1) body = `<div class="font-bold text-xl neon">Tu entrenamiento</div><div class="text-sm text-zinc-400 mb-1">Con esto armo una rutina que sí puedas cumplir.</div>
+    <div class="wz-q">⏱ ¿Cuánto tiempo dedicas a cada sesión?</div><div class="chips">${[['45', '30-45 min'], ['60', '45-60 min'], ['75', '60-75 min'], ['90', '75-90 min']].map(([v, l]) => wchip('duration', v, l)).join('')}</div>
+    <div class="wz-q">📍 ¿Dónde entrenas?</div><div class="chips">${wchip('place', 'gimnasio', 'Gimnasio')}${wchip('place', 'casa', 'Casa')}</div>
+    <div class="wz-q">📆 ¿Hace cuánto entrenas?</div><div class="chips">${wchip('level', 'principiante', 'Menos de 6 meses')}${wchip('level', 'intermedio', '6 meses a 2 años')}${wchip('level', 'avanzado', 'Más de 2 años')}</div>
+    <div class="wz-q">🎯 Objetivo de tu rutina</div><div class="chips">${wchip('goal', 'hipertrofia', 'Ganar músculo')}${wchip('goal', 'definición', 'Definición')}${wchip('goal', 'fuerza', 'Fuerza')}</div>
+    <div class="wz-q">🗓 ¿Cuántos días entrenas?</div><div class="chips">${Object.entries(WZ_DAYS).map(([k, v]) => wchip('sched', k, v.l)).join('')}</div>
+    ${d.sched ? `<div class="wz-q">🧩 División</div><div class="chips">${['Push/Pull/Legs', 'Torso/Pierna', 'Full Body'].map(v => wchip('split', v, v)).join('')}</div>` : ''}`;
+  else if (st === 2) body = `<div class="font-bold text-xl neon">Tu cuerpo</div><div class="text-sm text-zinc-400 mb-1">Para calcular tus calorías y macros.</div>
+    <div class="grid2 mt-2"><input id="wz-kg" type="text" inputmode="decimal" placeholder="Peso (kg)" value="${d.kg || ''}"><input id="wz-h" type="text" inputmode="numeric" placeholder="Estatura (cm)" value="${d.h || ''}"></div>
+    <div class="grid2 mt-2"><input id="wz-a" type="text" inputmode="numeric" placeholder="Edad" value="${d.age || ''}"><div class="chips" style="margin:0">${wchip('sex', 'm', 'Hombre')}${wchip('sex', 'f', 'Mujer')}</div></div>
+    <div class="wz-q">🥗 Objetivo con el cuerpo</div><div class="chips">${wchip('diet', 'cut', 'Definición')}${wchip('diet', 'bulk', 'Volumen')}${wchip('diet', 'maint', 'Mantenimiento')}</div>
+    <div class="text-xs text-zinc-500 mt-2">Si dices 1.66 m, escribe 166.</div>`;
+  else body = `<div class="font-bold text-xl neon">Tus preferencias</div><div class="text-sm text-zinc-400 mb-1">Elige lo que más disfrutas y tienes a la mano: así no abandonas.</div>
+    <div class="wz-q">🏋️ ¿Qué equipo prefieres usar? (varios)</div><div class="chips">${Object.entries(WZ_EQ).filter(([k]) => !home || ['mancuerna', 'peso'].includes(k)).map(([k, l]) => `<button class="chip ${(d.equip || []).includes(k) ? 'on' : ''}" data-act="wzeq" data-v="${k}">${l}</button>`).join('')}</div>
+    <div class="wz-q">🩹 ¿Alguna molestia o lesión?</div><div class="chips">${[['ninguna', 'Ninguna'], ['hombro', 'Hombro'], ['rodilla', 'Rodilla'], ['espalda', 'Espalda baja'], ['muneca', 'Muñeca/codo']].map(([k, l]) => `<button class="chip ${(d.inj || []).includes(k) ? 'on' : ''}" data-act="wzinj" data-v="${k}">${l}</button>`).join('')}</div>
+    <div class="text-xs text-zinc-500 mt-2">Evito los ejercicios que más cargan esa zona. Si el dolor es persistente, consulta a un profesional de la salud.</div>`;
+  return `<div style="padding:calc(env(safe-area-inset-top) + 18px) 0 40px"><img src="logo.png" width="70" height="70" alt="" style="margin:0 auto 10px;border-radius:50%">${head}<div class="card">${body}</div>
+    <div class="flex gap-2 mt-3">${st > 1 ? '<button class="btn ghost flex-1" data-act="wzback">← Atrás</button>' : ''}<button class="btn fill flex-1" data-act="${st < 3 ? 'wznext' : 'wzfinish'}">${st < 3 ? 'Siguiente →' : '⚡ Generar mi rutina'}</button></div></div>`;
+};
 const onboardingView = () => {
   const p = S.trainingPreferences, ready = S.trainingConfigured;
   const steps = [['Objetivo', !!p.goal], ['Nivel', !!p.level], ['Días y división', ready], ['Lugar y lesiones', !!(p.place || p.injuries)]];
@@ -1053,23 +1153,22 @@ const CUES = {
 /* ---------- XP, niveles y racha: se calculan SIEMPRE a partir de tus registros ---------- */
 const RANKS = [[1, 'Novato'], [5, 'Agresivo'], [10, 'Bestia'], [15, 'Titán'], [25, 'Élite'], [40, 'Leyenda']];
 const rankOf = L => RANKS.filter(r => L >= r[0]).pop()[1];
-const levelOf = xp => Math.floor(Math.sqrt(xp / 50)) + 1;
-const lvlStart = L => 50 * (L - 1) ** 2;
+const levelOf = X.levelOf, lvlStart = X.lvlStart; // curva realista (ver exdb.js): Nv 2 ≈ 1 semana, Nv 5 ≈ 1.5 meses, Nv 10 ≈ 5 meses, Nv 25 ≈ 2 años
 const allRows = () => Object.values(S.logs).flat();
 const setsOn = d => Object.values(S.logs).reduce((n, l) => n + l.filter(x => x.d === d).length, 0);
 const tonOn = d => Object.values(S.logs).reduce((n, l) => n + l.filter(x => x.d === d).reduce((a, x) => a + x.w * x.r, 0), 0);
 const histBudget = d => (S.target ? S.target.kcal + (S.adj[d] || 0) : 0);
 function xpBreakdown() {
-  const rows = allRows(), hist = Object.entries(S.macroHist);
+  const rows = allRows(), hist = Object.entries(S.macroHist), st = badgeState();
   return {
-    sets: rows.reduce((n, x) => n + (x.t === 'w' ? 3 : 10 + (x.rir <= 1 ? 3 : 0) + (x.devil ? 5 : 0) + (x.pr ? 50 : 0)), 0),
-    train: new Set(rows.map(x => x.d)).size * 40,
-    meals: hist.reduce((n, [, h]) => n + 5 * (h.n || 0), 0),
-    target: hist.filter(([d, h]) => d < today() && h.n > 0 && histBudget(d) && h.k >= 0.9 * histBudget(d) && h.k <= 1.1 * histBudget(d)).length * 25,
-    weigh: S.weights.length * 15,
-    done: Object.values(S.doneEx).reduce((n, o) => n + Object.keys(o).length, 0) * 10,
-    rest: Object.keys(S.dayRest).filter(d => d <= today()).length * 10,
-    badges: badgeState().tiers * 25,
+    sets: rows.reduce((n, x) => n + (x.t === 'w' ? 1 : 5 + (x.rir <= 1 ? 2 : 0) + (x.devil ? 3 : 0) + (x.pr ? 25 : 0)), 0),
+    train: new Set(rows.map(x => x.d)).size * 20,
+    meals: hist.reduce((n, [, h]) => n + 3 * (h.n || 0), 0),
+    target: hist.filter(([d, h]) => d < today() && h.n > 0 && histBudget(d) && h.k >= 0.9 * histBudget(d) && h.k <= 1.1 * histBudget(d)).length * 10,
+    weigh: S.weights.length * 8,
+    done: Object.values(S.doneEx).reduce((n, o) => n + Object.keys(o).length, 0) * 5,
+    rest: Object.keys(S.dayRest).filter(d => d <= today()).length * 5,
+    badges: st.tiers * 15 + st.trophies.filter(t => t.got).length * 20,
   };
 }
 const totalXp = () => Object.values(xpBreakdown()).reduce((a, b) => a + b, 0);
@@ -1082,8 +1181,11 @@ function syncHist() { // guarda el resumen de comida de cada día (para el contr
   if (!o || JSON.stringify(o) !== JSON.stringify(h)) { S.macroHist[S.macros.d] = h; store.set('macroHist', S.macroHist); }
 }
 const toast = m => { S.toast = m; clearTimeout(toast.t); toast.t = setTimeout(() => { S.toast = ''; render(); }, 2600); };
-const xpToast = b => { const a = totalXp(), bm = checkBadges(true); if (a <= b) return bm && toast(bm); const lb = levelOf(b), la = levelOf(a);
-  toast((la > lb ? `🔥 ¡NIVEL ${la}! ${rankOf(la)} · +${a - b} XP` : `+${a - b} XP`) + (bm ? ' · ' + bm : '')); };
+const xpToast = b => { const a = totalXp(), bm = checkBadges('modal'), items = S.pendingUnlocks || []; S.pendingUnlocks = [];
+  const lb = levelOf(b), la = levelOf(a), lv = la > lb ? [{ ic: '🔥', t: `¡NIVEL ${la}!`, d: `${rankOf(la)} · +${a - b} XP` }] : [], all = [...lv, ...items];
+  if (all.length && !S.modal) { S.modal = { type: 'unlock', items: all }; navigator.vibrate?.([80, 40, 80, 40, 160]); return; }
+  if (a <= b) return bm && toast(bm);
+  toast(`+${a - b} XP` + (bm ? ' · ' + bm : '')); };
 /* ---------- Logros y misiones: todo se calcula desde tus registros (nada se pierde) ---------- */
 const TIERS = ['Bronce', 'Plata', 'Oro', 'Platino', 'Diamante'];
 const BADGE_GROUPS = [
@@ -1098,6 +1200,23 @@ const BADGE_GROUPS = [
   { id: 'weigh', ic: '⚖️', n: 'Control', d: 'Pesajes', th: [2, 8, 20, 50, 100], v: c => c.weigh },
   { id: 'perfect', ic: '⭐', n: 'Semana perfecta', d: 'Semanas con todas las misiones', th: [1, 3, 8, 16, 32], v: c => c.perfect },
 ];
+/* Trofeos: se desbloquean una sola vez por hitos concretos (todo se calcula desde tus registros). */
+const TROPHIES = [
+  { id: 'first', ic: '🩸', n: 'Primera sangre', d: 'Registra tu primera serie', ok: c => c.sets + c.warm >= 1 },
+  { id: 'full', ic: '🏁', n: 'Sesión completa', d: 'Termina todos los ejercicios de un día', ok: c => c.fullDays >= 1 },
+  { id: 'drop', ic: '😈', n: 'Modo Diablo', d: 'Completa tu primer drop set', ok: c => c.drops >= 1 },
+  { id: 'pr1', ic: '🥇', n: 'Rompe-récords', d: 'Consigue tu primer PR', ok: c => c.prs >= 1 },
+  { id: 'scale', ic: '⚖️', n: 'Báscula', d: 'Registra tu primer peso corporal', ok: c => c.weigh >= 1 },
+  { id: 'fuel', ic: '🍽️', n: 'Combustible', d: 'Cierra un día dentro de tu meta de calorías', ok: c => c.onTarget >= 1 },
+  { id: 'hydro', ic: '💧', n: 'Bien hidratado', d: 'Cumple tu meta de agua una vez', ok: c => c.water >= 1 },
+  { id: 'dec', ic: '🔬', n: 'Preciso', d: 'Registra un peso con decimales', ok: c => c.dec },
+  { id: 'streak3', ic: '🔥', n: 'Tres seguidos', d: 'Racha de 3 días activos', ok: c => c.best >= 3 },
+  { id: 'ton', ic: '🏗️', n: 'Primera tonelada', d: 'Mueve 1 000 kg en total', ok: c => c.kgTotal >= 1000 },
+  { id: 'vol', ic: '🌋', n: 'Día de volumen', d: '20 series efectivas en un solo día', ok: c => c.maxSetsDay >= 20 },
+  { id: 'ten', ic: '🔟', n: 'Diez de diez', d: '10 días entrenados', ok: c => c.trainDays >= 10 },
+  { id: 'beast', ic: '🦍', n: 'Bestia de carga', d: 'Levanta 100 kg o más en una serie', ok: c => c.maxW >= 100 },
+  { id: 'wk', ic: '⭐', n: 'Semana perfecta', d: 'Cumple las 4 misiones de una semana', ok: c => c.perfect >= 1 },
+];
 function missionsFor(mon, c) {
   const days = Array.from({ length: 7 }, (_, i) => shiftIsoDate(mon, i)), tl = S.trainingPlan?.length ? sessionTimeline(days[6]) : {};
   const planned = days.filter(d => tl[d] != null).length, td = today();
@@ -1111,14 +1230,15 @@ function missionsFor(mon, c) {
 const BC = { sig: '', c: null, st: null };
 function badgeCtx() {
   const rows = allRows(), hist = Object.entries(S.macroHist), td = today();
-  const sig = [rows.length, hist.length, hist.reduce((a, [, h]) => a + (h.n || 0) * 1000 + Math.round(h.k || 0), 0), S.weights.length, Object.keys(S.dayRest).length, Object.values(S.hydra).reduce((a, h) => a + h.ml, 0), td].join('|');
+  const sig = [rows.length, hist.length, hist.reduce((a, [, h]) => a + (h.n || 0) * 1000 + Math.round(h.k || 0), 0), S.weights.length, Object.values(S.doneEx).reduce((a, o) => a + Object.keys(o).length, 0), Object.keys(S.dayRest).length, Object.values(S.hydra).reduce((a, h) => a + h.ml, 0), td].join('|');
   if (BC.sig === sig && BC.c) return BC.c;
-  const setsBy = {}; let sets = 0, kg = 0, prs = 0;
-  for (const x of rows) { setsBy[x.d] = (setsBy[x.d] || 0) + 1; if (x.t !== 'w') { sets++; kg += x.w * x.r; } if (x.pr) prs++; }
+  const setsBy = {}, effBy = {}; let sets = 0, kg = 0, prs = 0, warm = 0, drops = 0, maxW = 0, dec = false;
+  for (const x of rows) { setsBy[x.d] = (setsBy[x.d] || 0) + 1; if (x.t === 'w') warm++; else { sets++; kg += x.w * x.r; effBy[x.d] = (effBy[x.d] || 0) + 1; if (x.t === 'drop') drops++; if (x.w > maxW) maxW = x.w; } if (x.pr) prs++; if (x.w % 1 !== 0) dec = true; }
+  const fullDays = Object.entries(S.doneEx).filter(([d, o]) => (S.routineEdits[d] || []).length && Object.keys(o).length >= S.routineEdits[d].length).length;
   const inTarget = d => { const h = S.macroHist[d], b = histBudget(d); return !!(h && h.n > 0 && b && h.k >= .9 * b && h.k <= 1.1 * b); };
   const act = [...new Set([...Object.keys(setsBy), ...Object.keys(S.dayRest).filter(d => d <= td), ...hist.filter(([, h]) => h.n > 0).map(([d]) => d)])].sort();
   let best = 0, run = 0; act.forEach((d, i) => { run = i && Math.round((Date.parse(d) - Date.parse(act[i - 1])) / 864e5) === 1 ? run + 1 : 1; best = Math.max(best, run); });
-  const c = { setsBy, sets, ton: Math.round(kg / 1000), prs, trainDays: Object.keys(setsBy).length, best, meals: hist.reduce((n, [, h]) => n + (h.n || 0), 0), inTarget,
+  const c = { setsBy, sets, warm, drops, maxW, dec, fullDays, kgTotal: kg, maxSetsDay: Math.max(0, ...Object.values(effBy)), ton: Math.round(kg / 1000), prs, trainDays: Object.keys(setsBy).length, best, meals: hist.reduce((n, [, h]) => n + (h.n || 0), 0), inTarget,
     onTarget: hist.filter(([d]) => d < td && inTarget(d)).length, water: Object.values(S.hydra).filter(h => h.ml >= WATER_ML).length, weigh: S.weights.length, perfect: 0 };
   const first = [...Object.keys(setsBy), ...S.weights.map(w => w.d)].sort()[0];
   if (first) for (let m = mondayOf(first), g = 0; m <= mondayOf(td) && g < 80; m = shiftIsoDate(m, 7), g++) if (missionsFor(m, c).every(x => x.v >= x.t)) c.perfect++;
@@ -1128,15 +1248,17 @@ function badgeState() {
   const c = badgeCtx(); if (BC.st) return BC.st;
   const groups = BADGE_GROUPS.map(g => { const val = g.v(c), tier = g.th.filter(t => val >= t).length, prev = g.th[tier - 1] || 0, next = g.th[tier] ?? null;
     return { ...g, val, tier, next, pct: next == null ? 100 : Math.max(0, Math.round((val - prev) / (next - prev) * 100)) }; });
-  return (BC.st = { groups, tiers: groups.reduce((a, g) => a + g.tier, 0), max: BADGE_GROUPS.length * 5 });
+  return (BC.st = { groups, tiers: groups.reduce((a, g) => a + g.tier, 0), max: BADGE_GROUPS.length * 5, trophies: TROPHIES.map(t => ({ ...t, got: !!t.ok(c) })) });
 }
 function checkBadges(announce) {
-  const cur = badgeState().groups.flatMap(g => TIERS.slice(0, g.tier).map((_, i) => `${g.id}:${i + 1}`));
+  const st = badgeState(), cur = [...st.groups.flatMap(g => TIERS.slice(0, g.tier).map((_, i) => `${g.id}:${i + 1}`)), ...st.trophies.filter(t => t.got).map(t => 't:' + t.id)];
   if (!S.badgesSeen) { S.badgesSeen = cur; store.set('badgesSeen', cur); return ''; }
   const fresh = cur.filter(k => !S.badgesSeen.includes(k)); if (!fresh.length) return '';
   S.badgesSeen = cur; store.set('badgesSeen', cur); if (!announce) return '';
-  const [id, t] = fresh.at(-1).split(':'), g = BADGE_GROUPS.find(x => x.id === id); navigator.vibrate?.([80, 40, 80, 40, 160]);
-  return `🏅 Logro: ${g.n} ${TIERS[t - 1]}${fresh.length > 1 ? ` (+${fresh.length - 1})` : ''}`;
+  const items = fresh.map(k => { if (k.startsWith('t:')) { const t = st.trophies.find(x => 't:' + x.id === k); return { ic: t.ic, t: `Trofeo: ${t.n}`, d: `${t.d} · +20 XP` }; }
+    const [id, ti] = k.split(':'), g = BADGE_GROUPS.find(x => x.id === id); return { ic: g.ic, t: `Logro: ${g.n} ${TIERS[ti - 1]}`, d: `${g.d} · +15 XP` }; });
+  if (announce === 'modal') S.pendingUnlocks = items; else navigator.vibrate?.([80, 40, 80, 40, 160]);
+  return `🏅 ${items.at(-1).t}${items.length > 1 ? ` (+${items.length - 1})` : ''}`;
 }
 const missionsCard = () => { const ms = missionsFor(mondayOf(today()), badgeCtx()), done = ms.filter(m => m.v >= m.t).length;
   return `<div class="card"><div class="flex justify-between items-center"><div class="font-bold">🎯 Misiones de la semana</div><span class="mealtag">${done}/${ms.length}</span></div>
@@ -1146,6 +1268,9 @@ const badgesCard = () => { const st = badgeState();
   return `<div class="card"><div class="flex justify-between items-center"><div class="font-bold">🏅 Logros</div><span class="mealtag">${st.tiers}/${st.max} · +25 XP c/u</span></div>
   <div class="badges">${st.groups.map(g => `<div class="badge t${g.tier}"><div class="bic">${g.ic}</div><div class="bn">${g.n}</div><div class="bt">${g.tier ? TIERS[g.tier - 1] : 'Bloqueado'}</div><div class="xpbar"><i style="width:${g.pct}%"></i></div><small>${g.next != null ? `${g.val} / ${g.next}` : '¡MÁX!'}</small></div>`).join('')}</div>
   <div class="text-xs text-zinc-500 mt-2">Cada logro sube de Bronce a Diamante. ${esc(st.groups.find(g => g.next != null)?.d || '')}: toca seguir sumando.</div></div>`; };
+const trophyCard = () => { const st = badgeState(), n = st.trophies.filter(t => t.got).length;
+  return `<div class="card"><div class="flex justify-between items-center"><div class="font-bold">🏆 Sala de trofeos</div><span class="mealtag">${n}/${st.trophies.length} · +20 XP c/u</span></div>
+  <div class="badges">${st.trophies.map(t => `<div class="badge ${t.got ? 't3' : 'lock'}"><div class="bic">${t.got ? t.ic : '🔒'}</div><div class="bn">${t.n}</div><small>${t.got ? '¡Conseguido!' : esc(t.d)}</small></div>`).join('')}</div></div>`; };
 const rankIx = L => RANKS.filter(r => L >= r[0]).length - 1;
 const xpLine = () => { const x = totalXp(), L = levelOf(x), a = lvlStart(L), nx = lvlStart(L + 1), st = streak();
   return `<div class="xpline" data-act="view" data-v="control"><b class="neon">Nv ${L}</b><span>${rankOf(L)}</span><div class="xpbar"><i style="width:${Math.round((x - a) / (nx - a) * 100)}%"></i></div><small>${x - a}/${nx - a} XP</small>${st ? `<span>🔥${st}</span>` : ''}</div>`; };
@@ -1168,10 +1293,13 @@ const controlView = () => {
   <div class="stat3"><div><b>${st}🔥</b><span>racha</span></div><div><b>${badgeState().tiers}</b><span>logros</span></div><div><b>${prs}</b><span>PRs (7 d)</span></div><div><b>${x}</b><span>XP total</span></div></div>
   <button class="btn fill w-full mt-3" data-act="startworkout">🔥 INICIAR ENTRENAMIENTO</button>
   <div class="text-xs text-zinc-400 mt-2">XP por: series ${br.sets} · días entrenados ${br.train} · comida ${br.meals + br.target} · ejercicios terminados ${br.done} · peso ${br.weigh} · descansos ${br.rest} · logros ${br.badges}</div>
-  <details class="mt-2 text-sm text-zinc-400"><summary>Cómo gano XP</summary>Serie +10 (+3 si RIR 0-1, +5 drop set; calentamiento +3) · ejercicio terminado +10 · PR +50 · día entrenado +40 · comida registrada +5 · día dentro de tu meta +25 · pesaje +15 · descanso marcado +10. Rangos: Novato, Agresivo (nv 5), Bestia (10), Titán (15), Élite (25), Leyenda (40).</details></div>
+  <details class="mt-2 text-sm text-zinc-400"><summary>Cómo gano XP</summary>Serie +5 (+2 si RIR 0-1, +3 drop set; calentamiento +1) · ejercicio terminado +5 · PR +25 · día entrenado +20 · comida registrada +3 · día dentro de tu meta +10 · pesaje +8 · descanso marcado +5 · logro +15 · trofeo +20. Un día completo da ≈150 XP: el nivel 2 llega en ~1 semana y el 10 en ~5 meses. Rangos: Novato, Agresivo (nv 5), Bestia (10), Titán (15), Élite (25), Leyenda (40).</details></div>
 ${goalBar()}
 ${missionsCard()}
 ${badgesCard()}
+${trophyCard()}
+<div class="card"><div class="font-bold">💾 Respaldo de tus datos</div><div class="text-xs text-zinc-400 mt-1">Tu progreso vive en este celular (perfil ${esc(PROFILES[profile])}). Descarga un respaldo cuando quieras: lo puedes guardar en Archivos/Drive o mandármelo para revisar tu avance. Última vez: ${esc(store.get('lastBackup', 'nunca'))}.</div>
+  <div class="flex gap-2 mt-2"><button class="btn fill flex-1" data-act="backupexport">Descargar respaldo</button><button class="btn ghost flex-1" data-act="backupimport">Restaurar</button></div><input type="file" id="bk-file" accept=".json,application/json" style="display:none"></div>
 ${pdfCard()}
 <div class="card"><div class="font-bold">Hoy · ${state}</div>
   ${S.target ? `<div class="text-sm text-zinc-400 mt-1">${m.k} / ${b} kcal · P ${m.p} · C ${m.c} · G ${m.f}</div><div class="h-2 bg-zinc-900 mt-2 rounded"><div class="h-2 rounded" style="width:${Math.min(100, b ? m.k / b * 100 : 0)}%;background:#ff2b57"></div></div>` : '<div class="text-sm text-zinc-500 mt-1">Configura tu perfil en Nutrición para ver tus calorías.</div>'}</div>
@@ -1192,6 +1320,13 @@ const sheet = () => {
   if (m.type === 'acr') { const g = GLOSSARY[m.k];
     return `<div class="sheet"><div><div class="text-xs text-zinc-500 uppercase tracking">Significado</div><div class="font-bold text-lg neon">${esc(m.k)} · ${esc(g.n)}</div><div class="text-sm mt-2">${esc(g.d)}</div>${g.p ? `<div class="text-sm mt-2">🎯 Te conviene si ${esc(g.p)}</div>` : ''}${g.a ? `<div class="text-sm text-zinc-400 mt-2">📲 En tu plan: ${esc(g.a)}</div>` : ''}<button class="btn ghost w-full mt-3" data-act="closemodal">Cerrar</button></div></div>`; }
   if (m.type === 'titan') return titanSheet();
+  if (m.type === 'comfort') return `<div class="sheet"><div style="max-height:90vh;overflow:auto"><div class="font-bold text-lg">🛠️ Tus ejercicios por músculo</div><div class="text-xs text-zinc-500 mb-2">Toca «Cambiar» para ver equivalentes. El cambio se aplica a todo tu calendario.</div>
+    ${planMuscles().map(k => pickFor(k, 2).map((full, i) => { const e = exByName(full); return `<div class="routine-exercise-row"><span class="routine-exercise-name"><span class="text-xs text-zinc-500">${esc(MUSCLES[k].n)} ${i ? '· complemento' : '· principal'}</span><br>${esc(e?.n || full)} <span class="text-xs text-zinc-500">${e ? esc(X.EQ[e.eq]) : ''}</span></span><button class="chip !px-3" data-act="comfortslot" data-k="${k}" data-i="${i}">Cambiar</button></div>`; }).join('')).join('')}
+    <button class="btn fill w-full mt-3" data-act="closemodal">Listo</button></div></div>`;
+  if (m.type === 'comfortpick') return `<div class="sheet"><div style="max-height:90vh;overflow:auto"><div class="font-bold">Cambiar: ${esc(m.cur)}</div><div class="text-xs text-zinc-500 mb-2">Mismo músculo y función. Elige el más cómodo para ti.</div>
+    ${m.opts.map(o => `<button class="btn w-full mb-2" style="text-align:left;height:auto;padding:12px" data-act="comfortset" data-k="${m.k}" data-i="${m.i}" data-n="${esc(o.n)}"><b>${esc(o.n)}</b><div class="text-xs text-zinc-400 mt-1">${esc(X.EQ[o.eq])} · ${o.sets}×${o.rng}</div></button>`).join('') || '<div class="text-sm text-zinc-400">No hay más equivalentes con tu equipo.</div>'}
+    <button class="btn ghost w-full" data-act="comfort">← Volver</button></div></div>`;
+  if (m.type === 'unlock') return `<div class="sheet"><div style="text-align:center;max-height:88vh;overflow:auto">${m.items.map(i => `<div class="unl"><div class="unl-ic">${i.ic}</div><div class="font-black text-xl neon">${esc(i.t)}</div><div class="text-sm text-zinc-300 mt-1">${esc(i.d)}</div></div>`).join('')}<button class="btn fill w-full mt-3" data-act="closemodal">¡Seguir!</button></div></div>`;
   if (m.type === 'offlinehelp') return `<div class="sheet"><div style="max-height:92vh;overflow:auto">
     <div class="text-xs text-zinc-500 uppercase tracking">Sin conexión</div><div class="font-bold text-xl neon">📴 Cómo seguir en modo offline</div>
     <ul class="strat mt-2"><li>🏋️ <b>Entrenar funciona igual</b>: tu rutina, el descanso entre series y el registro de series se guardan en el celular y no necesitan internet.</li>
@@ -1231,8 +1366,9 @@ const sheet = () => {
     <button class="btn ghost w-full mt-2" data-act="aikeylater">Más tarde</button></div></div>`;
   if (m.type === 'setlog') {
     const ex = exById(m.id), warm = m.t === 'w', chips = (act, items, cur) => items.map(([v, l]) => `<button class="chip ${cur === v ? 'on' : ''}" data-act="${act}" data-v="${v}">${l}</button>`).join('');
-    return `<div class="sheet"><div><div class="flex justify-between items-center gap-2"><div class="font-bold">${esc(S.swaps[m.id] || ex.n)}</div><div class="neon text-lg">${m.w} kg × ${m.r}</div></div>
-    ${m.devil ? '<div class="text-xs neon mt-1">⬇ Drop set: esta es la serie principal, al fallo</div>' : ''}
+    return `<div class="sheet"><div><div class="flex justify-between items-center gap-2"><div class="font-bold">${esc(ex.n)}</div><div class="neon text-lg">${m.w} kg × ${m.r}</div></div>
+    ${m.devil && m.last ? `<div class="text-xs neon mt-1">⬇ Drop set (última serie): después de guardar baja a <b>${dropWs(m.w)[0]} kg</b> → ${dropWs(m.w)[1]} kg → ${dropWs(m.w)[2]} kg</div>` : m.devil ? '<div class="text-xs text-zinc-400 mt-1">El drop set se hace en la última serie del ejercicio.</div>' : ''}
+    ${m.last ? '<div class="text-xs neon mt-1">🔔 Esta es tu última serie: al guardarla paso al siguiente ejercicio.</div>' : ''}
     <div class="text-sm text-zinc-400 mt-3 mb-2">¿Qué serie es?</div>
     <div class="grid grid-cols-5 gap-2">${chips('setpick', [['w', 'Calent.'], [1, '1'], [2, '2'], [3, '3'], [4, '4']], m.t)}</div>
     ${warm ? '' : `<div class="text-sm text-zinc-400 mt-3 mb-2">¿Cuántas reps te quedaban? (RIR)</div>
@@ -1242,9 +1378,10 @@ const sheet = () => {
     <button class="btn fill w-full mt-4" data-act="setsave">Guardar serie</button>
     <button class="btn ghost w-full mt-2" data-act="closemodal">Cancelar</button></div></div>`;
   }
-  if (m.type === 'swap') return `<div class="sheet"><div><div class="font-bold mb-1">Smart Swap</div><div class="text-xs text-zinc-500 mb-3">Misma tensión, otra máquina. Solo para hoy.</div>
-    ${m.alts.map(a => `<button class="btn w-full mb-2" data-act="doswap" data-n="${esc(a)}">${esc(a)}</button>`).join('')}
-    <button class="btn ghost w-full" data-act="doswap" data-n="">Volver al original</button></div></div>`;
+  if (m.type === 'swap') return `<div class="sheet"><div style="max-height:90vh;overflow:auto"><div class="font-bold mb-1">🔁 Smart Swap</div><div class="text-xs text-zinc-500 mb-3">2 alternativas reales para ${esc(m.name)}: mismo músculo y misma tensión, que <b>no están en tu rutina de hoy</b>. Solo para hoy: tu rutina no cambia.</div>
+    ${m.opts.map(o => `<button class="btn w-full mb-2" style="text-align:left;height:auto;padding:12px" data-act="doswap" data-to="${o.id}"><b>${esc(o.n)}</b><div class="text-xs text-zinc-400 mt-1">${esc(o.eqn)} · ${o.sets}×${o.rng}</div><div class="text-xs neon mt-1">${o.w != null ? `Empieza con ≈ <b>${o.w} kg${o.uni ? ' por mano' : ''}</b> (RIR 2-3)` : o.bw ? 'Peso corporal o asistencia: elige la que te deje hacer 8 reps buenas' : 'Empieza ligero y sube hasta RIR 2-3'}</div></button>`).join('') || '<div class="text-sm text-zinc-400">No hay más alternativas de este músculo con tu equipo.</div>'}
+    ${m.cur ? '<button class="btn ghost w-full" data-act="doswap" data-to="">↩ Volver al original</button>' : ''}
+    <button class="btn ghost w-full mt-2" data-act="closemodal">Cerrar</button></div></div>`;
   if (m.type === 'routineedit') return `<div class="sheet"><div class="exercise-modal">
     <div class="flex justify-between items-center gap-2"><div class="font-bold">${m.index < 0 ? 'Añadir ejercicio' : 'Editar ejercicio'}</div><button class="icon-btn" data-act="closemodal" aria-label="Cerrar">×</button></div>
     <label class="text-sm text-zinc-400 block mt-3" for="routine-exercise">Nombre y objetivo/repeticiones</label>
@@ -1277,13 +1414,23 @@ function render() {
   const html = S.screen === 'boot' ? '<div class="pt-48 text-center neon text-xl">Verificando licencia…</div>'
     : S.screen === 'aiconnect' ? aiconnectView() + sheet() + (S.toast ? `<div class="toast">${esc(S.toast)}</div>` : '')
     : S.screen === 'auth' ? authView() : S.screen === 'locked' ? lockedView()
-    : !S.onboarded ? onboardingView() + sheet() + restBar() + (S.toast ? `<div class="toast">${esc(S.toast)}</div>` : '')
+    : !S.onboarded ? wzView() + sheet() + restBar() + (S.toast ? `<div class="toast">${esc(S.toast)}</div>` : '')
     : header() + (S.view === 'train' ? trainView() : S.view === 'food' ? foodView() : S.view === 'control' ? controlView() : mapView()) + sheet() + restBar() + (S.toast ? `<div class="toast">${esc(S.toast)}</div>` : '');
   const t = document.createElement('div'); t.innerHTML = html; morph($('#app'), t); wake();
 }
 
 /* ---------- Acciones (delegación) ---------- */
-const val = id => parseFloat($('#' + id)?.value);
+const val = id => parseFloat(String($('#' + id)?.value ?? '').replace(',', '.')); // admite coma o punto decimal (teclado en español)
+/** Peso de referencia del ejercicio original: su mejor serie de trabajo reciente (o la de hoy). */
+const bestRef = ex => { const rows = (S.logs[ex.id] || []).filter(x => x.t !== 'w' && x.t !== 'drop'); if (!rows.length) return null; const d = rows.at(-1).d, day = rows.filter(x => x.d === d); return { ex, w: Math.max(...day.map(x => x.w)) }; };
+/** Termina un ejercicio, abre el siguiente y arranca el descanso de transición (descanso inteligente entre ejercicios). */
+function finishExercise(id, auto, drop) {
+  const iso = S.routineDate, xb = totalXp(); (S.doneEx[iso] ||= {})[id] = true; store.set('doneEx', S.doneEx); delete S.drop[id];
+  const cards = cardsFor(iso), cur = exById(id), nxt = cards.find(c => !S.doneEx[iso][c.id]);
+  S.open = nxt ? nxt.id : null;
+  if (nxt) { const p = transitionPlan(cur, nxt); S.rest = Date.now() + p.sec * 1000; S.restWhy = p.why; if (auto) toast(`✅ ${cur.n} terminado · ahora: ${nxt.n} · descansa ${X.fmtRest(p.sec)}`); else xpToast(xb); }
+  else { S.rest = 0; S.restWhy = ''; toast('🏁 ¡Sesión completada! Buen trabajo'); }
+}
 const ACT = {
   async login() { await authAction(signIn); },
   async signup() { await authAction(signUp, true); },
@@ -1316,6 +1463,44 @@ const ACT = {
     setAiKey(t); store.set('aiAsked', true); S.modal = null; startConnect(); // el estado de la conexión se ve en pantalla
   },
   aikeylater() { store.set('aiAsked', true); S.modal = null; if (S.screen === 'aiconnect') S.screen = 'app'; toast('Puedes conectarla cuando quieras en el botón 🤖 IA'); },
+  recfix() { const iso = S.routineDate, ks = S.dayMuscles[iso] || [], bad = X.recoveryIssues(ks, iso, lastTrained(iso)).map(i => i.k);
+    const keep = routineExercisesForDate(iso).filter(n => { const e = exByName(n); return e && !bad.includes(e.k); }); S.dayMuscles[iso] = ks.filter(k => !bad.includes(k));
+    if (keep.length) S.routineEdits[iso] = keep; else { delete S.routineEdits[iso]; S.dayRest[iso] = true; delete S.dayMuscles[iso]; }
+    ['dayMuscles', 'routineEdits', 'dayRest'].forEach(k => store.set(k, S[k])); toast('🛡️ Listo: hoy descansas esos músculos'); },
+  recskip() { S.recIgnore[S.routineDate] = true; store.set('recIgnore', S.recIgnore); },
+  comfort() { S.modal = { type: 'comfort' }; },
+  comfortslot(d) { const k = d.k, i = +d.i, cur = exByName(pickFor(k, 2)[i]), other = exByName(pickFor(k, 2)[1 - i]), place = S.trainingPreferences?.place === 'casa' ? 'casa' : 'gimnasio', equip = S.trainingPreferences?.equip || [];
+    const opts = X.EXDB.filter(e => e.k === k && e.id !== cur.id && e.id !== other?.id && e.role === cur.role && X.usable(e, { place })).sort((a, b) => (b.pat === cur.pat) - (a.pat === cur.pat) || (equip.includes(b.eq) - equip.includes(a.eq)));
+    S.modal = { type: 'comfortpick', k, i, cur: cur.n, opts }; },
+  comfortset(d) { const k = d.k, i = +d.i, names = pickFor(k, 2).map(clean); names[i] = d.n; S.exPicks[k] = names; store.set('exPicks', S.exPicks);
+    applyPlanToCalendar(0); S.modal = { type: 'comfort' }; toast(`✅ ${d.n} · aplicado a tu calendario`); },
+  comfortdone() { S.comfortUntil = ''; store.set('comfortUntil', ''); S.modal = null; toast('🔒 Rutina bloqueada: ¡a entrenar!'); },
+  async backupexport() { const data = JSON.stringify(dump(), null, 1), name = `AGRESSIVE-LIFT-respaldo-${profile}-${today()}.json`;
+    try { const f = new File([data], name, { type: 'application/json' }); if (navigator.canShare?.({ files: [f] })) { await navigator.share({ files: [f], title: name }); store.set('lastBackup', today()); return; } } catch (e) { if (e?.name === 'AbortError') return; }
+    const url = URL.createObjectURL(new Blob([data], { type: 'application/json' })), a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 6e4); store.set('lastBackup', today()); toast('💾 Respaldo descargado'); },
+  backupimport() { $('#bk-file')?.click(); },
+  wzset(d) { wzCapture(); wzd()[d.k] = d.v; if (d.k === 'sched' && !wzd().split) wzd().split = WZ_DAYS[d.v].days === 4 ? 'Torso/Pierna' : 'Push/Pull/Legs';
+    if (d.k === 'sched') wzd().split = WZ_DAYS[d.v].days === 4 ? 'Torso/Pierna' : 'Push/Pull/Legs'; if (d.k === 'goal' && !wzd().diet) wzd().diet = { definición: 'cut', hipertrofia: 'bulk', fuerza: 'maint' }[d.v]; if (d.k === 'place' && d.v === 'casa') wzd().equip = (wzd().equip || []).filter(e => ['mancuerna', 'peso'].includes(e)); wzSave(); },
+  wzeq(d) { const a = wzd().equip || []; wzd().equip = a.includes(d.v) ? a.filter(x => x !== d.v) : [...a, d.v]; wzSave(); },
+  wzinj(d) { let a = wzd().inj || []; a = d.v === 'ninguna' ? (a.includes('ninguna') ? [] : ['ninguna']) : a.filter(x => x !== 'ninguna'); if (d.v !== 'ninguna') a = a.includes(d.v) ? a.filter(x => x !== d.v) : [...a, d.v]; wzd().inj = a; wzSave(); },
+  wzback() { wzCapture(); S.wz.step = Math.max(1, S.wz.step - 1); wzSave(); },
+  wznext() { wzCapture(); const d = wzd();
+    if (S.wz.step === 1) { const miss = [!d.duration && 'el tiempo por sesión', !d.place && 'dónde entrenas', !d.level && 'hace cuánto entrenas', !d.goal && 'tu objetivo', !d.sched && 'cuántos días entrenas'].filter(Boolean); if (miss.length) return alert('Falta elegir: ' + miss.join(', ')); }
+    if (S.wz.step === 2) { if (!(d.kg > 30 && d.kg < 300 && d.h > 120 && d.h < 230 && d.age > 13 && d.age < 90)) return alert('Revisa peso (kg), estatura (cm, ej. 166) y edad.'); if (!d.sex || !d.diet) return alert('Elige tu sexo y tu objetivo con el cuerpo.'); }
+    S.wz.step++; wzSave(); window.scrollTo?.(0, 0); },
+  wzfinish() { const d = wzd(); if (!(d.equip || []).length) return alert('Elige al menos un tipo de equipo (o «Peso corporal»).'); if (!(d.inj || []).length) return alert('Marca «Ninguna» o la zona con molestia.');
+    const sc = WZ_DAYS[d.sched], days = sc.days, split = d.split || 'Push/Pull/Legs', cycle = !!sc.cycle, restDays = cycle ? sc.rest : 7 - days;
+    const wd = days === 3 ? [1, 3, 5] : days === 4 ? [1, 2, 4, 6] : days === 5 ? [1, 2, 3, 5, 6] : [1, 2, 3, 4, 5, 6];
+    const schedule = { days, split, cycle, workDays: days, restDays, startDate: today(), named: false, weekdays: wd };
+    Object.assign(S.trainingPreferences, { goal: d.goal, level: d.level, place: d.place, duration: d.duration + ' min', equip: d.equip, injuries: d.inj.includes('ninguna') ? 'ninguna' : d.inj.join(', '), phaseDiet: d.diet, bodyKg: d.kg, heightCm: d.h, age: d.age, sex: d.sex });
+    S.trainingSchedule = schedule; const request = { days, split, cycle, restDays, schedule, goal: d.goal, level: d.level, lw: { none: true } };
+    S.trainingPlan = buildTrainingPlan('', request); S.trainingConfigured = true; S.trainingOnboarded = true; S.showRoutine = false; S.coachPending = null;
+    S.planLock = makeLock(); S.profile = { h: d.h, age: d.age, sex: d.sex, goal: d.diet }; S.dietLock = makeDietLock(d.diet); S.target = E.initial({ kg: d.kg, ...S.profile }); S.weights = [{ d: today(), kg: d.kg }];
+    S.comfortUntil = dAdd(6); store.set('comfortUntil', S.comfortUntil); store.set('comfortSeen', true); S.onboarded = true; store.set('onboarded', true);
+    ['trainingConfigured', 'trainingOnboarded', 'trainingSchedule', 'trainingPlan', 'trainingPreferences', 'planLock', 'coachPending', 'dietLock', 'profile', 'target', 'weights'].forEach(k => store.set(k, S[k]));
+    saveBody(S.user.id, { weight: d.kg }); applyPlanToCalendar(); store.set('wzDraft', {}); S.wz = { step: 1, d: {} }; S.screen = 'app';
+    S.coachChat = [{ role: 'assistant', text: `✅ Rutina lista: ${days} días${cycle ? ` + ${restDays} de descanso (ciclo)` : ' por semana'} · ${split} · ${d.goal} · ${d.place}. Tus calorías: ${S.target.kcal} kcal (P ${S.target.p} · C ${S.target.c} · G ${S.target.f}). Tienes 7 días para cambiar ejercicios por otros más cómodos en la pestaña de entrenamiento.` }]; store.set('coachChat', S.coachChat);
+    toast('⚡ Tu rutina está lista · ajusta tus ejercicios en 🛠️'); },
   connretry() { if (!hasAiKey()) { S.modal = { type: 'aisetup' }; return; } S.modal = null; startConnect(); },
   connoffline() { if (!hasAiKey()) store.set('aiAsked', true); setOffline(true); S.offlineMode = true; S.screen = 'app'; S.modal = { type: 'offlinehelp' }; },
   connskip() { S.screen = 'app'; }, // entra sin esperar: la conexión sigue en segundo plano y se ve en la franja
@@ -1407,26 +1592,29 @@ const ACT = {
     if (raveOn() && E.isPR(hist, w, r)) return alert('🔒 PR bloqueado por Modo Rave (48 h). Baja la carga o las reps.');
     const k = MAP[exById(d.id).m];
     if (weekDone(k) >= MUSCLES[k].mrv && !confirm(`Ya alcanzaste el MRV de ${MUSCLES[k].n} esta semana (${MUSCLES[k].mrv} series). ¿Registrar igual?`)) return;
-    const n = todaySets(d.id).filter(x => x.t !== 'w' && x.t !== 'drop').length;
-    S.modal = { type: 'setlog', id: d.id, w, r, t: Math.min(4, n + 1), rir: 2, fail: 'Músculo objetivo', devil: !!S.devil[d.id] };
+    const n = todaySets(d.id).filter(x => x.t !== 'w' && x.t !== 'drop').length, plan = exById(d.id).sets || 3;
+    S.modal = { type: 'setlog', id: d.id, w, r, t: Math.min(4, n + 1), rir: 2, fail: 'Músculo objetivo', devil: !!S.devil[d.id], last: n + 1 >= plan };
   },
   setpick(d) { S.modal = { ...S.modal, t: d.v === 'w' ? 'w' : +d.v }; },
   rirpick(d) { S.modal = { ...S.modal, rir: +d.v }; },
   limpick(d) { S.modal = { ...S.modal, fail: d.v }; },
   setsave() {
     const m = S.modal, xb = totalXp(), warm = m.t === 'w', ex = exById(m.id);
-    const isPR = !warm && E.isPR((S.logs[m.id] || []).filter(x => x.t !== 'w'), m.w, m.r);
+    const allW = (S.logs[m.id] || []).filter(x => x.t !== 'w'), isPR = !warm && allW.some(x => x.d !== today()) && E.isPR(allW, m.w, m.r); // PR: supera tu mejor marca de días anteriores
     const fail = !warm && GRIP.test(ex.n) ? m.fail : 'Músculo objetivo';
-    const row = { d: today(), w: m.w, r: m.r, rir: warm ? 4 : m.rir, fail, devil: !!(m.devil && !warm), t: m.t, pr: isPR && !raveOn() };
+    const dropNow = !!(m.devil && m.last && !warm); // el drop set se hace SOLO en la última serie
+    const row = { d: today(), w: m.w, r: m.r, rir: warm ? 4 : m.rir, fail, devil: dropNow, t: m.t, pr: isPR && !raveOn() };
     (S.logs[m.id] ||= []).push(row); store.set('logs', S.logs);
     saveSet(S.user.id, { exercise: m.id, weight: m.w, reps: m.r, rir: row.rir, failure: fail, devil: row.devil });
-    let rp;
-    if (m.devil && !warm) { // drop set: −20 % en cascada, sin descanso
-      const ws = []; let x = m.w; for (let i = 0; i < 3; i++) { x = E.r25(x * 0.8); ws.push(x); }
-      S.drop[m.id] = { step: 0, ws }; rp = { sec: 10, why: `Drop set: baja a ${ws[0]} kg YA (−20 %), sin descansar` };
-    } else rp = restPlan({ id: m.id, t: m.t, r: m.r, rir: row.rir });
-    S.rest = Date.now() + rp.sec * 1000; S.restWhy = rp.why; S.fresh = m.id; S.modal = null; celebrate(m.id, isPR && !raveOn()); xpToast(xb);
-    if (isPR && !raveOn()) setTimeout(() => toast('🔥 ¡NUEVO PR! +50 XP'), 120);
+    let rp; const plan = ex.sets || 3, workN = todaySets(m.id).filter(x => x.t !== 'w' && x.t !== 'drop').length;
+    S.modal = null; S.fresh = m.id; celebrate(m.id, isPR && !raveOn());
+    if (dropNow) { // drop set: −20 % en cascada, sin descanso
+      const ws = dropWs(m.w); S.drop[m.id] = { step: 0, ws }; rp = { sec: 10, why: `Drop set: baja a ${ws[0]} kg YA (−20 %), sin descansar` };
+      S.rest = Date.now() + rp.sec * 1000; S.restWhy = rp.why; xpToast(xb);
+    } else if (!warm && workN === plan && !isDone(m.id)) { // última serie planificada: terminó el ejercicio → siguiente ejercicio con su descanso
+      xpToast(xb); finishExercise(m.id, true);
+    } else { rp = restPlan({ id: m.id, t: m.t, r: m.r, rir: row.rir }); S.rest = Date.now() + rp.sec * 1000; S.restWhy = rp.why; xpToast(xb); }
+    if (isPR && !raveOn()) setTimeout(() => toast('🔥 ¡NUEVO PR! +25 XP'), 120);
   },
   dropsave(d) {
     const id = d.id, p = S.drop[id]; if (!p) return;
@@ -1434,22 +1622,28 @@ const ACT = {
     const xb = totalXp(), w = p.ws[p.step];
     (S.logs[id] ||= []).push({ d: today(), w, r, rir: 0, fail: 'Músculo objetivo', devil: true, t: 'drop' }); store.set('logs', S.logs);
     saveSet(S.user.id, { exercise: id, weight: w, reps: r, rir: 0, failure: 'Músculo objetivo', devil: true });
-    p.step++; S.fresh = id;
-    const rp = p.step >= 3 ? restPlan({ id, t: 3, r, rir: 0, drop: 'end' }) : { sec: 10, why: `Drop set: baja a ${p.ws[p.step]} kg YA, sin descansar` };
-    if (p.step >= 3) delete S.drop[id];
-    S.rest = Date.now() + rp.sec * 1000; S.restWhy = rp.why; celebrate(id, false); xpToast(xb);
+    p.step++; S.fresh = id; celebrate(id, false);
+    if (p.step >= 3) { delete S.drop[id]; xpToast(xb); finishExercise(id, true, 'end'); }
+    else { S.rest = Date.now() + 10e3; S.restWhy = `Drop set: baja a ${p.ws[p.step]} kg YA, sin descansar`; xpToast(xb); }
   },
-  dropskip(d) { delete S.drop[d.id]; },
-  doneex(d) { // marca terminado y pasa al siguiente ejercicio del orden de la rutina
-    const iso = S.routineDate, xb = totalXp(); (S.doneEx[iso] ||= {})[d.id] = true; store.set('doneEx', S.doneEx); delete S.drop[d.id];
-    const cards = routineExercisesForDate(iso).map(exByName).filter(Boolean), nxt = cards.find(c => !S.doneEx[iso][c.id]);
-    S.open = nxt ? nxt.id : null;
-    if (nxt) { const p = transitionPlan(exById(d.id), nxt); S.rest = Date.now() + p.sec * 1000; S.restWhy = p.why; xpToast(xb); }
-    else { S.rest = 0; toast('🏁 ¡Sesión completada! Buen trabajo'); }
-  },
+  dropskip(d) { delete S.drop[d.id]; if (todaySets(d.id).filter(x => x.t !== 'w' && x.t !== 'drop').length >= (exById(d.id).sets || 3) && !isDone(d.id)) finishExercise(d.id, true); },
+  doneex(d) { finishExercise(d.id, false); }, // marca terminado y pasa al siguiente ejercicio del orden de la rutina
   undone(d) { delete (S.doneEx[S.routineDate] || {})[d.id]; store.set('doneEx', S.doneEx); S.open = d.id; },
-  swap(d) { S.modal = { type: 'swap', id: d.id, alts: [...exById(d.id).alt] }; },
-  doswap(d) { d.n ? S.swaps[S.modal.id] = d.n : delete S.swaps[S.modal.id]; S.modal = null; },
+  swap(d) {
+    const iso = S.routineDate, cards = cardsFor(iso), cur = cards.find(c => c.id === d.id); if (!cur) return;
+    if (!cur.swapFrom && todaySets(d.id).length) return alert('Ya registraste series de este ejercicio: cámbialo antes de empezar o termínalo.');
+    const orig = exById(cur.swapFrom || d.id), exclude = [cur.n, ...routineExercisesForDate(iso), ...Object.keys(S.logs).filter(id => todaySets(id).length).map(id => exById(id)?.n).filter(Boolean)];
+    const ref = bestRef(orig), bw = S.weights?.at(-1)?.kg || S.trainingPreferences?.bodyKg, lvl = S.trainingPreferences?.level, sex = S.profile?.sex;
+    const opts = X.swapOptions(orig, { exclude, equip: S.trainingPreferences?.equip || [], place: S.trainingPreferences?.place === 'casa' ? 'casa' : 'gimnasio' })
+      .map(o => ({ id: o.id, n: o.n, eqn: X.EQ[o.eq], sets: o.sets, rng: o.rng, uni: o.uni, bw: o.bw, w: X.suggestWeight(o, { ref, bw, level: lvl, sex })?.w ?? null }));
+    S.modal = { type: 'swap', id: orig.id, name: orig.n, opts, cur: !!cur.swapFrom };
+  },
+  doswap(d) {
+    const iso = S.routineDate, orig = S.modal.id, o = S.modal.opts.find(x => x.id === d.to), m = (S.swapsBy[iso] ||= {});
+    if (!d.to) delete m[orig]; else m[orig] = { to: d.to, w: o?.w ?? null, fromName: exById(orig).n };
+    Object.keys(S.swapsBy).filter(k => k < dAdd(-7)).forEach(k => delete S.swapsBy[k]); store.set('swapsBy', S.swapsBy);
+    S.modal = null; if (d.to) { S.open = d.to; toast(`🔁 ${o.n}${o.w != null ? ` · empieza con ≈ ${o.w} kg` : ''}`); }
+  },
   coachtoggle() { S.coachOpen = !S.coachOpen; store.set('coachOpen', S.coachOpen); },
   aitab(d) { S.aiTab = d.tab || 'coach'; store.set('aiTab', S.aiTab); },
   coachsend() {
@@ -1486,7 +1680,7 @@ const ACT = {
       try {
         const result = await ai('coach', { task: 'nutrition',
           systemPrompt: 'Eres el coach de nutrición de AGRESSIVE LIFT. Haz preguntas de entrevista SOLO sobre los datos que aparezcan en missing; si missing está vacío el perfil ya está completo: no hagas entrevista, responde y organiza directo. Adapta cada recomendación al mensaje actual, preferencias guardadas y macros restantes; evita respuestas genéricas repetidas. No inventes macros exactos sin cantidades.',
-          question: text, recentMessages: S.nutritionChat.slice(-8), cocina: (() => { try { return S.target ? N.cookPlan(currentMenu(0), S.nutritionPreferences).map(b => `${b.day} (${b.title}): ${b.tasks.join(' ')}`) : null; } catch { return null; } })(), horarioTrain: S.trainingSchedule ? { dias: S.trainingSchedule.weekdays, ultimo: S.trainingPreferences.lastWorkout || null } : null, goalGuide: S.trainingPreferences.goal && GOALS[S.trainingPreferences.goal] ? { goal: S.trainingPreferences.goal, nutri: GOALS[S.trainingPreferences.goal].nutri } : null, missing: N.missing(S.nutritionPreferences, !!S.target), target: nutritionTarget(), preferences: S.nutritionPreferences, conversation: S.nutritionChat.slice(-8),
+          question: text, recentMessages: S.nutritionChat.slice(-8), cocina: cookCtx(), horarioTrain: S.trainingSchedule ? { dias: S.trainingSchedule.weekdays, ultimo: S.trainingPreferences.lastWorkout || null } : null, goalGuide: S.trainingPreferences.goal && GOALS[S.trainingPreferences.goal] ? { goal: S.trainingPreferences.goal, nutri: GOALS[S.trainingPreferences.goal].nutri } : null, missing: N.missing(S.nutritionPreferences, !!S.target), target: nutritionTarget(), preferences: S.nutritionPreferences, conversation: S.nutritionChat.slice(-8),
           remaining: { kcal: remaining.kcal - S.macros.k, protein: remaining.p - S.macros.p,
             carbs: remaining.c - S.macros.c, fat: remaining.f - S.macros.f },
           style: STYLES[S.style][0], meals: S.meals.slice(-3).map(meal => meal.text) });
@@ -1510,6 +1704,8 @@ const ACT = {
   menuday(d) { S.menuDay = +d.i || 0; },
   dietnew() { if (dietLockActive()) return; S.dietLock = null; S.target = null; S.profile = null; store.set('dietLock', null); persist('profile', 'target'); },
   menuregen() { S.menuSeed++; store.set('menuSeed', S.menuSeed); },
+  batchsel(d) { S.batchIdx = +d.i || 0; },
+  cookdays(d) { S.cookDays = +d.n || 0; store.set('cookDays', S.cookDays); S.batchIdx = 0; },
   menuweek(d) { S.menuWeek = Math.max(0, Math.min(3, (S.menuWeek || 0) + (+d.n || 0))); },
   weekseen() { S.menuWeekSeen = mondayOf(today()); store.set('menuWeekSeen', S.menuWeekSeen); },
   async pdfmonth() {
@@ -1675,21 +1871,35 @@ function musclesForSession(name) {
   return ['gluteos', 'pecho', 'espalda', 'hombros'];
 }
 /** Vuelca el plan al calendario (próximas 4 semanas): entrenos con ejercicios y descansos. No toca días ya registrados. */
+/** Último día que se entrenó cada músculo (por los registros), opcionalmente solo antes de una fecha. */
+const lastTrained = before => { const last = {}; for (const [id, rows] of Object.entries(S.logs)) { const e = exById(id), k = e?.k || MAP[e?.m]; if (!k) continue;
+  for (const r of rows) if (r.t !== 'w' && (!before || r.d < before) && (!last[k] || r.d > last[k])) last[k] = r.d; } return last; };
 function applyPlanToCalendar(from = -14) {
-  const level = S.trainingPreferences.level, perMuscle = level === 'principiante' ? 1 : 2;
+  const level = S.trainingPreferences.level, dur = parseInt(S.trainingPreferences.duration) || 0, perMuscle = level === 'principiante' || (dur && dur <= 45) ? 1 : 2; // sesiones cortas: 1 ejercicio por músculo
   const hasLogs = iso => Object.values(S.logs).some(l => l.some(x => x.d === iso));
+  const last = lastTrained(); S.recNotes = {};
   for (let i = from; i < (S.planLock?.weeks ? S.planLock.weeks * 7 : 28); i++) {
     const iso = shiftIsoDate(today(), i);
-    if (hasLogs(iso) || (i >= 0 && S.customDay[iso])) continue;
+    if (hasLogs(iso) || (i >= 0 && S.customDay[iso])) { (S.dayMuscles[iso] || []).forEach(k => { if (!last[k] || iso > last[k]) last[k] = iso; }); continue; }
     if (i < 0) { if (S.manualRest[iso]) continue; delete S.dayMuscles[iso]; delete S.routineEdits[iso]; delete S.dayRest[iso]; delete S.doneEx[iso]; continue; }
     const ses = routineSessionForDate(iso);
     if (ses) {
-      const ks = ses.m || musclesForSession(ses.day);
+      const ks0 = ses.m || musclesForSession(ses.day), rec = X.recoverMuscles(ks0, iso, last); let ks = ks0; // recuperación: no repetir un músculo antes de 48-72 h
+      if (rec.removed.length) {
+        let ks2 = rec.ks, added = [];
+        if (ks2.length < Math.min(2, ks0.length)) { // quedaría una sesión pobre: se completa con músculos YA recuperados que no choquen con la sesión siguiente
+          let nx = []; for (let j = 1; j <= 4 && !nx.length; j++) { const n = routineSessionForDate(shiftIsoDate(iso, j)); if (n) nx = n.m || musclesForSession(n.day); }
+          const pool = [...new Set([...planMuscles(), ...Object.keys(X.DEFAULT_PICKS)])].filter(k => !ks2.includes(k) && !nx.includes(k) && !X.recoverMuscles([k], iso, last).removed.length).sort((a, b) => (last[a] || '') < (last[b] || '') ? -1 : 1);
+          added = pool.slice(0, Math.min(3, ks0.length) - ks2.length); ks2 = [...ks2, ...added];
+        }
+        if (ks2.length >= 2) { ks = ks2; S.recNotes[iso] = { removed: rec.removed, added }; } else S.recNotes[iso] = { warn: rec.removed };
+      }
+      ks.forEach(k => { last[k] = iso; });
       S.dayMuscles[iso] = ks; delete S.dayRest[iso]; delete S.doneEx[iso];
-      S.routineEdits[iso] = strategicOrder(ks).flatMap(k => CATALOG[k].slice(0, perMuscle));
+      S.routineEdits[iso] = strategicOrder(ks).flatMap(k => pickFor(k, perMuscle));
     } else { delete S.dayMuscles[iso]; delete S.routineEdits[iso]; S.dayRest[iso] = true; }
   }
-  ['dayMuscles', 'routineEdits', 'dayRest', 'doneEx'].forEach(k => store.set(k, S[k]));
+  ['dayMuscles', 'routineEdits', 'dayRest', 'doneEx', 'recNotes'].forEach(k => store.set(k, S[k]));
 }
 
 const planDetails = () => S.trainingPlan.map(day => `${day.day} (${day.focus}):\n• ${day.blocks.join('\n• ')}`).join('\n\n');
@@ -1946,7 +2156,7 @@ async function nutritionAI(text, input) {
       systemPrompt: 'Eres el nutricionista real de AGRESSIVE LIFT: hablas como una persona, cercano y directo, en español y sin listas numeradas. Haz la entrevista de forma conversacional (UNA pregunta por turno, sin repetir lo ya respondido) y guarda con update_macros todo dato nuevo. Si faltanParaAbrirPlan está vacío, no hagas entrevista: responde y organiza directo. No inventes macros de una comida sin cantidades.',
       faltanParaAbrirPlan: N.missing(S.nutritionPreferences, !!S.target), preferences: S.nutritionPreferences,
       restante: { kcal: rem.kcal - S.macros.k, proteina: rem.p - S.macros.p, carbos: rem.c - S.macros.c, grasa: rem.f - S.macros.f }, estilo: STYLES[S.style][0], comidasHoy: S.meals.slice(-3).map(m => m.text),
-      cocina: (() => { try { return S.target ? N.cookPlan(currentMenu(0), S.nutritionPreferences).map(b => `${b.day} (${b.title}): ${b.tasks.join(' ')}`) : null; } catch { return null; } })(),
+      cocina: cookCtx(),
       horarioTrain: S.trainingSchedule ? { dias: S.trainingSchedule.weekdays, ultimo: S.trainingPreferences.lastWorkout || null } : null,
       goalGuide: S.trainingPreferences.goal && GOALS[S.trainingPreferences.goal] ? { goal: S.trainingPreferences.goal, nutri: GOALS[S.trainingPreferences.goal].nutri } : null,
       recentMessages: hist(S.nutritionChat) });
@@ -2012,6 +2222,8 @@ document.addEventListener('click', async e => {
   await f(el.dataset); restSync();
   if (S.screen === 'app' || S.screen === 'aiconnect') render();
 });
+document.addEventListener('change', async e => { if (e.target?.id !== 'bk-file') return; const f = e.target.files?.[0]; if (!f) return;
+  try { const obj = JSON.parse(await f.text()); if (!confirm(`Restaurar el respaldo del ${String(obj.at || '').slice(0, 10)} (perfil ${obj.profile})? Reemplaza los datos de este perfil (${PROFILES[profile]}).`)) return; const n = restore(obj); alert(`✅ ${n} datos restaurados. La app se reiniciará.`); location.reload(); } catch (err) { alert('No pude leer ese archivo: ' + (err.message || err)); } e.target.value = ''; });
 document.addEventListener('keydown', e => {
   const el = e.target.closest?.('.muscle-region');
   if (!el || !['Enter', ' '].includes(e.key)) return;
@@ -2049,6 +2261,7 @@ if (CONFIG_OK) {
   document.addEventListener('visibilitychange', () => { if (!document.hidden && S.user && Date.now() - lastCheck > 3e5) { lastCheck = Date.now(); gate({ user: S.user }); } });
 } else { gate(); }
 try { migrateCalendar(); } catch (e) { console.error(e); }
+try { if (S.planLock && !store.get('comfortSeen')) { S.comfortUntil = dAdd(6); store.set('comfortUntil', S.comfortUntil); store.set('comfortSeen', true); } } catch (e) { console.error(e); }
 try { if (!S.menuWeekSeen) { S.menuWeekSeen = mondayOf(today()); store.set('menuWeekSeen', S.menuWeekSeen); } checkBadges(false); } catch (e) { console.error(e); }
 maybeTitan();
 render();
