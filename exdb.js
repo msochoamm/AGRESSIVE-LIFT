@@ -115,7 +115,7 @@ const prefScore = (e, equip = []) => (equip.length ? (equip.includes(e.eq) ? 2 :
 
 /** Elige n ejercicios de un músculo: 1.º compuesto principal y 2.º complementario/aislamiento, respetando equipo y lugar.
     picks = elecciones guardadas por la persona (ajuste de comodidad) que mandan sobre todo lo demás. */
-export function pickExercises(k, n, { equip = [], place = 'gimnasio', picks = {}, avoid = [] } = {}) {
+export function pickExercises(k, n, { equip = [], place = 'gimnasio', picks = {}, avoid = [], variant = 0 } = {}) {
   const saved = (picks[k] || []).map(bySlug).filter(Boolean), def = DEFAULT_PICKS[k].map(bySlug);
   const fits = e => usable(e, { place }) && !avoid.includes(e.n);
   const rank = (cand, list) => [...list].sort((a, b) => prefScore(b, equip) - prefScore(a, equip) || (b.pat === cand.pat) - (a.pat === cand.pat) || (b.role === cand.role) - (a.role === cand.role));
@@ -132,7 +132,20 @@ export function pickExercises(k, n, { equip = [], place = 'gimnasio', picks = {}
     if (out.includes(cand)) { const alt = rank(cand, EXDB.filter(e => e.k === k && fits(e) && !out.includes(e)))[0]; if (alt) cand = alt; }
     if (!out.includes(cand)) out.push(cand);
   }
+  // Variante B/C: el mismo músculo en otra sesión del ciclo (Torso A/B, Cuerpo completo A/B/C) usa OTROS ejercicios equivalentes (mismo patrón, otro equipo/ángulo).
+  if (variant > 0 && !saved.length) {
+    const base = [...out], used = new Set(base.map(e => e.id));
+    for (let i = 0; i < base.length; i++) {
+      const pool = rank(base[i], EXDB.filter(e => e.k === k && fits(e) && !used.has(e.id) && e.role === base[i].role && !e.rear));
+      const pick = pool[(variant - 1) % Math.max(1, pool.length)]; if (pick) { out[i] = pick; used.add(pick.id); }
+    }
+  }
   return out.slice(0, n).map(e => `${e.n} ${e.sets}×${e.rng}`);
+}
+/** Deltoide posterior: va con el día de EMPUJE (como en el ciclo 3+1 de CBum), nunca como "hombro" pegado al día siguiente. */
+export function pickRear({ equip = [], place = 'gimnasio', avoid = [], variant = 0 } = {}) {
+  const pool = EXDB.filter(e => e.k === 'hombros' && e.pat === 'rear' && usable(e, { place }) && !avoid.includes(e.n)).sort((a, b) => prefScore(b, equip) - prefScore(a, equip) || ['maquina', 'polea', 'mancuerna'].indexOf(a.eq) - ['maquina', 'polea', 'mancuerna'].indexOf(b.eq));
+  const e = pool[variant % Math.max(1, pool.length)]; return e ? `${e.n} ${e.sets}×${e.rng}` : null;
 }
 
 /* ---------- Peso sugerido ---------- */

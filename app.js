@@ -7,13 +7,14 @@ import * as X from './exdb.js';
 
 /* ---------- Utilidades y persistencia local ---------- */
 const $ = s => document.querySelector(s);
-const VERSION = 'v30';
+const VERSION = 'v31';
 const esc = t => String(t).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 await hydrate(); // IndexedDB → caché en memoria
 const localIso = t => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const today = () => localIso(Date.now());
 const DEFAULT_TRAINING_SCHEDULE = { days: 3, split: 'PPL', cycle: false, workDays: 3, restDays: 4, startDate: today(), weekdays: [1, 3, 5] };
-const TRAINER_SYSTEM_PROMPT = 'Eres el entrenador real de AGRESSIVE LIFT: hablas como una persona, cercano y directo, en español y sin listas numeradas. Obedece el mensaje actual: nunca sustituyas una frecuencia o división explícita por una genérica de 3 días. Haz la entrevista de forma conversacional (UNA pregunta por turno, sin repetir lo que ya respondió: revisa preferences, lastWorkout y el historial) y, cuando tengas lo imprescindible, genera el plan en ese mismo turno con command update_routine. Si planLock está activo el plan es INAMOVIBLE hasta planLock.until: no uses update_routine y ofrece solo ajustes de carga, técnica o recuperación. No repitas literalmente tu respuesta anterior.';
+const TRAINER_RULES = ' REGLAS DE PROGRAMACIÓN (obligatorias, basadas en consenso científico y en cómo entrenan CBum y Jesse James West): 1) Nunca programes el mismo músculo con menos de 48 h entre sesiones (72 h en piernas y espalda). 2) El deltoide posterior (pájaros, pec deck inverso, face pull) va con el día de EMPUJE junto a pecho y tríceps, nunca en el día de jalón; los hombros no se repiten en días seguidos. 3) No repitas el mismo ejercicio en días consecutivos; en Torso/Pierna o cuerpo completo usa variantes A/B. 4) El press de pecho ya carga el deltoide anterior: no pongas hombros el día después de pecho salvo dentro de la misma sesión de empuje. 5) Apunta a 10-20 series semanales por músculo y a entrenar cada músculo 2 veces por semana cuando el esquema lo permita; el ciclo 3 días + 1 descanso (CBum) entrena cada músculo una vez por ciclo; la mejor división es la que la persona cumple. 6) Si te piden revisar o corregir la rutina (aunque esté bloqueada) usa los datos de auditoria y el calendario y responde con command adjust_routine y payload {"actions":[{"type":"replace_exercise","muscle":"pecho","slot":0,"name":"nombre exacto del catálogo"},{"type":"remove_muscle","date":"AAAA-MM-DD","muscle":"hombros"},{"type":"fix_recovery"}]}. Nunca cambies días ni la división de una rutina bloqueada.';
+const TRAINER_SYSTEM_PROMPT = 'Eres el entrenador real de AGRESSIVE LIFT: hablas como una persona, cercano y directo, en español y sin listas numeradas. Obedece el mensaje actual: nunca sustituyas una frecuencia o división explícita por una genérica de 3 días. Haz la entrevista de forma conversacional (UNA pregunta por turno, sin repetir lo que ya respondió: revisa preferences, lastWorkout y el historial) y, cuando tengas lo imprescindible, genera el plan en ese mismo turno con command update_routine. Si planLock está activo el plan es INAMOVIBLE hasta planLock.until: no uses update_routine y ofrece solo ajustes de carga, técnica o recuperación. No repitas literalmente tu respuesta anterior.' + TRAINER_RULES;
 const nutritionHistory = store.get('nutritionChatHistory', []);
 const previousNutritionChat = store.get('nutritionChat', []);
 if (previousNutritionChat.some(message => message.role === 'user')) {
@@ -146,7 +147,8 @@ const weekDone = k => [...ALL, ...Object.values(CEX)].filter(e => MAP[e.m] === k
 // Catálogo: SIEMPRE 2 ejercicios por músculo (principal + complementario).
 // Catálogo: la selección por músculo sale de la base de ejercicios (exdb.js) según equipo, lugar y ajustes de comodidad.
 const avoidList = () => { const inj = String(S.trainingPreferences?.injuries || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ''); return Object.entries(X.AVOID).filter(([k]) => inj.includes(k)).flatMap(([, v]) => v); };
-const pickFor = (k, n = 2) => X.pickExercises(k, n, { equip: S.trainingPreferences?.equip || [], place: S.trainingPreferences?.place === 'casa' ? 'casa' : 'gimnasio', picks: S.exPicks || {}, avoid: avoidList() });
+const exOpts = () => ({ equip: S.trainingPreferences?.equip || [], place: S.trainingPreferences?.place === 'casa' ? 'casa' : 'gimnasio', avoid: avoidList() });
+const pickFor = (k, n = 2, variant = 0) => X.pickExercises(k, n, { ...exOpts(), picks: S.exPicks || {}, variant });
 const CATALOG = {}; Object.keys(X.DEFAULT_PICKS).forEach(k => Object.defineProperty(CATALOG, k, { get: () => pickFor(k), enumerable: true }));
 const PRESETS = { Push: ['pecho', 'hombros', 'triceps'], Pull: ['espalda', 'biceps'], Piernas: ['cuads', 'isquios', 'gluteos', 'gemelos'] };
 const LABEL = X.LABEL;
@@ -199,7 +201,7 @@ const S = {
   nutritionChat: freshNutritionChat,
   nutritionHistory: store.get('nutritionChatHistory', []),
   nutritionBusy: false,
-  menuDay: (new Date().getDay() + 6) % 7, menuSeed: store.get('menuSeed', 0), exPicks: store.get('exPicks', {}), recNotes: store.get('recNotes', {}), recIgnore: store.get('recIgnore', {}), swapsBy: store.get('swapsBy', {}), cookDays: store.get('cookDays', 0), batchIdx: 0, comfortUntil: store.get('comfortUntil', ''), trophiesSeen: store.get('trophiesSeen', null), wz: { step: 1, d: store.get('wzDraft', {}) }, menuWeek: 0, menuWeekSeen: store.get('menuWeekSeen', ''), pdfMonth: store.get('pdfMonth', ''), badgesSeen: store.get('badgesSeen', null),
+  menuDay: (new Date().getDay() + 6) % 7, menuSeed: store.get('menuSeed', 0), exPicks: store.get('exPicks', {}), pdfWeek: store.get('pdfWeek', ''), recNotes: store.get('recNotes', {}), recIgnore: store.get('recIgnore', {}), swapsBy: store.get('swapsBy', {}), cookDays: store.get('cookDays', 0), batchIdx: 0, comfortUntil: store.get('comfortUntil', ''), trophiesSeen: store.get('trophiesSeen', null), wz: { step: 1, d: store.get('wzDraft', {}) }, menuWeek: 0, menuWeekSeen: store.get('menuWeekSeen', ''), pdfMonth: store.get('pdfMonth', ''), badgesSeen: store.get('badgesSeen', null),
 };
 if (!S.trainingPlan.length) {
   S.trainingPlan = [
@@ -638,7 +640,7 @@ const calendarCard = () => {
     <div class="flex justify-between items-center mb-2"><div><div class="font-bold text-lg">Calendario</div>
     <div class="text-xs text-zinc-500">${base.toLocaleString('es-ES', { month: 'long', year: 'numeric', timeZone: 'UTC' })} · toca un día para elegirlo</div></div>
     <div class="chip on">${c.done + c.plan} entrenos · ${c.rest} descansos</div></div>
-    <div class="calendar-grid">${['L', 'M', 'X', 'J', 'V', 'S', 'D'].map(l => `<div class="calendar-head">${l}</div>`).join('')}${cells.map(x => x ? `<button class="calendar-day ${dayState(x)} ${x === S.routineDate ? 'sel' : ''} ${x === today() ? 'today' : ''}" data-act="routinedate" data-date="${x}">${Number(x.slice(8))}${S.dayRest[x] ? '<small>😴</small>' : ''}</button>` : '<div></div>').join('')}</div>
+    <div class="calendar-grid">${['L', 'M', 'X', 'J', 'V', 'S', 'D'].map(l => `<div class="calendar-head">${l}</div>`).join('')}${cells.map(x => x ? `<button class="calendar-day ${dayState(x) === 'rest' ? 'restday' : dayState(x)} ${x === S.routineDate ? 'sel' : ''} ${x === today() ? 'today' : ''}" data-act="routinedate" data-date="${x}">${Number(x.slice(8))}${S.dayRest[x] ? '<small>😴</small>' : ''}</button>` : '<div></div>').join('')}</div>
     <div class="text-xs text-zinc-500 mt-2">Rojo sólido: entreno hecho · borde rojo: planeado · 😴 descanso</div>
   </div>`;
 };
@@ -724,10 +726,31 @@ const shortDate = iso => new Date(iso + 'T12:00:00').toLocaleDateString('es-CO',
 const weekBanner = () => { const k = mondayOf(today()); if (!S.menuWeekSeen) { S.menuWeekSeen = k; store.set('menuWeekSeen', k); return ''; }
   return S.menuWeekSeen === k ? '' : `<div class="card on banner"><div class="font-bold">🔄 ¡Nueva semana, nuevo menú!</div><div class="text-sm text-zinc-400 mt-1">Cambié recetas y proteínas de esta semana (siempre con tus macros) y actualicé las tandas de cocina y sus listas de compras.</div><button class="btn fill w-full mt-2" data-act="weekseen">Entendido</button></div>`; };
 const MONTHS = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
-const pdfCard = () => { if (!S.target || !N.ready(S.nutritionPreferences, true)) return ''; const done = S.pdfMonth === today().slice(0, 7), mes = MONTHS[+today().slice(5, 7) - 1];
-  return `<div class="card ${done ? '' : 'on'} pdfcard"><div class="flex justify-between items-center gap-2"><div class="min-w-0"><div class="font-bold">📄 Plan de ${mes} en PDF</div><div class="text-xs text-zinc-400 mt-1">${done ? 'Ya lo descargaste este mes. El del próximo mes aparece aquí solo.' : '4 semanas con comidas distintas cada semana: recetas, horarios, entrenos y lista de compras. Cada mes sale uno nuevo.'}</div></div><button class="btn ${done ? 'ghost' : 'fill'} !px-3" data-act="pdfmonth">${done ? 'Otra vez' : 'Descargar'}</button></div></div>`; };
+const pdfCard = () => { if (!S.target || !N.ready(S.nutritionPreferences, true)) return ''; const m0 = mondayOf(today()), done = S.pdfWeek === m0, nx = shiftIsoDate(m0, 7);
+  return `<div class="card ${done ? '' : 'on'} pdfcard"><div class="font-bold">📄 PDF de la semana</div><div class="text-xs text-zinc-400 mt-1">${done ? 'Ya descargaste el de esta semana. Cada lunes sale uno nuevo con tu dieta actualizada.' : '¡Nuevo! Tu plan de la semana: tandas de cocina con su lista de compras, qué cocinar y qué comer cada día, más tus entrenos.'}</div>
+  <div class="flex gap-2 mt-2"><button class="btn ${done ? 'ghost' : 'fill'} flex-1" data-act="pdfweek" data-off="0">Esta semana<br><small>${shortDate(m0)}</small></button><button class="btn ghost flex-1" data-act="pdfweek" data-off="1">Próxima semana<br><small>${shortDate(nx)}</small></button></div>
+  <button class="chip w-full mt-2" data-act="pdfmonth">Mes completo (resumen de 4 semanas)</button></div>`; };
 const PREPTXT = { nevera: m => `Nevera · ${m} min`, cocinar: m => `Cocinar · ${m} min`, rapido: m => `Rápido · ${m} min`, fuera: () => 'Restaurante' };
-/** Datos del PDF mensual: 4 semanas con menú, horarios, entrenos, compras y cocina. */
+/** Datos del PDF semanal: la semana (lun-dom) organizada por TANDAS de cocina (compra → cocina → come). */
+function weekData(mon) {
+  const t = nutritionTarget(), prefs = S.nutritionPreferences, sch = S.trainingSchedule, DN = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'], DNL = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+  const dow = iso => (new Date(iso + 'T12:00:00').getDay() + 6) % 7, isos = Array.from({ length: 7 }, (_, i) => shiftIsoDate(mon, i)), inWeek = new Set(isos);
+  const sess = iso => { const x = hasTrainPlan() ? routineSessionForDate(iso) : null; return x ? x.day.replace(/^Día \d+ · /, '') : ''; };
+  const order = [], map = {}; isos.forEach(iso => { const b = batchOf(iso); if (!map[b.start]) { map[b.start] = { ...b, no: order.length + 1 }; order.push(b.start); } });
+  const days = isos.map((iso, i) => { const b = map[batchOf(iso).start]; return { name: DN[i], date: shortDate(iso), train: sess(iso) || 'Descanso', cook: b.start === iso, batchN: b.no }; });
+  const meal = m => ({ slot: m.slot, time: m.time ? fmtHour(m.time) : '', name: m.name, items: m.items.map(it => it.text).join(' · '), k: m.k, p: m.p, c: m.c, f: m.f });
+  const batches = order.map(st => { const b = map[st], mm = batchMenu(b), dates = Array.from({ length: b.n }, (_, k) => shiftIsoDate(b.start, k)), carry = b.start < mon, label = batchLabel(b), seen = new Set(), recipes = [];
+    const dayObjs = dates.map((iso, k) => ({ iso, k })).filter(({ iso }) => !carry || inWeek.has(iso)).map(({ iso, k }) => { const ms = mm.days[k] || [];
+      ms.forEach(m => { if (!seen.has(m.id)) { seen.add(m.id); if ((m.steps || []).length) recipes.push({ name: m.name, steps: m.steps }); } });
+      return { name: DNL[dow(iso)], date: shortDate(iso), train: sess(iso) || 'Descanso', meals: ms.map(meal), tot: ms.reduce((a, m) => ({ k: a.k + m.k, p: a.p + m.p, c: a.c + m.c, f: a.f + m.f }), { k: 0, p: 0, c: 0, f: 0 }), dim: !inWeek.has(iso) }; });
+    const cb = carry ? { groceries: [], tasks: [] } : N.cookBatch(mm.days, label);
+    return { n: b.no, carry, cookLabel: longDay(b.start), range: label, nDays: b.n, beyond: b.end > isos[6], groceries: cb.groceries, tasks: cb.tasks, recipes,
+      strip: dates.map(iso => ({ top: `${DN[dow(iso)]} ${iso.slice(8)}`, kind: iso === b.start ? 'cook' : isTrain(iso) ? 'train' : 'rest', dim: !inWeek.has(iso) })), days: dayObjs }; }).filter(b => b.days.length);
+  return { name: PROFILES[profile], week: { label: `${shortDate(mon)} al ${shortDate(isos[6])} ${isos[6].slice(0, 4)}` }, generated: fmtLong(today()), target: t, days, batches,
+    training: isos.map((iso, i) => ({ name: DNL[i], date: shortDate(iso), train: sess(iso) || 'Descanso', muscles: (S.dayMuscles[iso] || []).map(k => MUSCLES[k].n) })),
+    strategy: N.strategy({ target: t, prefs, goal: S.profile?.goal || 'maint', trainDays: sch?.days || 3 }) };
+}
+/** Datos del PDF mensual (resumen): 4 semanas con menú, horarios, entrenos, compras y cocina. */
 function monthData() {
   const t = nutritionTarget(), prefs = S.nutritionPreferences, mon0 = shiftIsoDate(mondayOf(today()), [0, 6].includes(new Date().getDay()) ? 7 : 0), sch = S.trainingSchedule, hasPlan = !!S.trainingPlan?.length;
   const DN = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
@@ -893,8 +916,10 @@ const comfortOn = () => !!S.trainingConfigured && !!S.comfortUntil && S.comfortU
 const comfortCard = () => !comfortOn() ? '' : `<div class="card on mt-3"><div class="font-bold neon">🛠️ Ajusta tu rutina a tu comodidad</div>
   <div class="text-sm text-zinc-400 mt-1">Esta es tu única ventana para cambiar ejercicios (hasta el ${esc(fmtLong(S.comfortUntil))}). Elige el que te quede más cómodo: solo te muestro equivalentes del <b>mismo músculo y la misma función</b>, así la rutina mantiene su eficacia. Luego se bloquea.</div>
   <div class="flex gap-2 mt-2"><button class="btn fill flex-1" data-act="comfort">Elegir ejercicios</button><button class="btn ghost flex-1" data-act="comfortdone">Así está bien</button></div></div>`;
+const reviewCard = () => !S.trainingConfigured ? '' : `<div class="card mt-3"><div class="flex justify-between items-center gap-2"><div class="min-w-0 text-sm"><b>🔎 Revisar y corregir mi rutina</b><div class="text-xs text-zinc-400">Verifica recuperación (48-72 h), ejercicios repetidos y estructura. Funciona aunque esté bloqueada.${AI_ON ? ' La IA da su opinión.' : ''}</div></div><button class="chip on !px-3 flex-none" data-act="reviewplan">Revisar</button></div></div>`;
 const trainingRoutinePanel = () => `<div class="routine-panel">
   ${comfortCard()}
+  ${reviewCard()}
   ${deloadCard()}
   ${recGuardCard()}
   ${routineDayPicker()}
@@ -1320,6 +1345,10 @@ const sheet = () => {
   if (m.type === 'acr') { const g = GLOSSARY[m.k];
     return `<div class="sheet"><div><div class="text-xs text-zinc-500 uppercase tracking">Significado</div><div class="font-bold text-lg neon">${esc(m.k)} · ${esc(g.n)}</div><div class="text-sm mt-2">${esc(g.d)}</div>${g.p ? `<div class="text-sm mt-2">🎯 Te conviene si ${esc(g.p)}</div>` : ''}${g.a ? `<div class="text-sm text-zinc-400 mt-2">📲 En tu plan: ${esc(g.a)}</div>` : ''}<button class="btn ghost w-full mt-3" data-act="closemodal">Cerrar</button></div></div>`; }
   if (m.type === 'titan') return titanSheet();
+  if (m.type === 'review') return `<div class="sheet"><div style="max-height:90vh;overflow:auto"><div class="font-bold text-lg">🔎 Revisión de tu rutina</div>
+    <div class="text-sm text-zinc-300 mt-2" style="white-space:pre-wrap">${esc(m.r.text)}</div>
+    <div class="card mt-3"><div class="text-xs text-zinc-500 uppercase tracking">Opinión de la IA</div><div class="text-sm mt-1" style="white-space:pre-wrap">${m.ai ? esc(m.ai) : AI_ON ? '<span class="spin"></span>Analizando…' : 'Conecta la IA para recibir también su análisis. La revisión de arriba ya se aplicó.'}</div></div>
+    <button class="btn fill w-full mt-3" data-act="closemodal">Entendido</button></div></div>`;
   if (m.type === 'comfort') return `<div class="sheet"><div style="max-height:90vh;overflow:auto"><div class="font-bold text-lg">🛠️ Tus ejercicios por músculo</div><div class="text-xs text-zinc-500 mb-2">Toca «Cambiar» para ver equivalentes. El cambio se aplica a todo tu calendario.</div>
     ${planMuscles().map(k => pickFor(k, 2).map((full, i) => { const e = exByName(full); return `<div class="routine-exercise-row"><span class="routine-exercise-name"><span class="text-xs text-zinc-500">${esc(MUSCLES[k].n)} ${i ? '· complemento' : '· principal'}</span><br>${esc(e?.n || full)} <span class="text-xs text-zinc-500">${e ? esc(X.EQ[e.eq]) : ''}</span></span><button class="chip !px-3" data-act="comfortslot" data-k="${k}" data-i="${i}">Cambiar</button></div>`; }).join('')).join('')}
     <button class="btn fill w-full mt-3" data-act="closemodal">Listo</button></div></div>`;
@@ -1463,6 +1492,10 @@ const ACT = {
     setAiKey(t); store.set('aiAsked', true); S.modal = null; startConnect(); // el estado de la conexión se ve en pantalla
   },
   aikeylater() { store.set('aiAsked', true); S.modal = null; if (S.screen === 'aiconnect') S.screen = 'app'; toast('Puedes conectarla cuando quieras en el botón 🤖 IA'); },
+  async reviewplan() { const r = reviewPlan(true); S.modal = { type: 'review', r, ai: '' }; render();
+    if (AI_ON && !S.coachBusy) { try { const res = await ai('coach', { task: 'training', systemPrompt: TRAINER_SYSTEM_PROMPT, currentMessage: 'Revisa mi rutina con la auditoría y dime en 3-4 frases si está bien armada y qué mejorarías (recuperación, volumen, variedad). Si hace falta un ajuste, usa adjust_routine.',
+        planConfigurado: true, schedule: S.trainingSchedule, trainingPlan: S.trainingPlan, calendario: calPreview(), preferences: S.trainingPreferences, auditoria: { antes: r.before.slice(0, 10), despues: r.after.slice(0, 10), correcciones: r.fixes.slice(0, 10) }, recentMessages: [] });
+        let out = String(res.note || '').trim(); if (res.command === 'adjust_routine') out += '\n\n' + applyAdjustments(res.payload); if (S.modal?.type === 'review') { S.modal.ai = out || 'Todo en orden.'; } } catch (e) { if (S.modal?.type === 'review') S.modal.ai = '⚠️ La IA no respondió: ' + (e.message || e); } render(); } },
   recfix() { const iso = S.routineDate, ks = S.dayMuscles[iso] || [], bad = X.recoveryIssues(ks, iso, lastTrained(iso)).map(i => i.k);
     const keep = routineExercisesForDate(iso).filter(n => { const e = exByName(n); return e && !bad.includes(e.k); }); S.dayMuscles[iso] = ks.filter(k => !bad.includes(k));
     if (keep.length) S.routineEdits[iso] = keep; else { delete S.routineEdits[iso]; S.dayRest[iso] = true; delete S.dayMuscles[iso]; }
@@ -1700,7 +1733,7 @@ const ACT = {
     if (d.k === 'style') { S.style = v; store.set('style', v); }
     S.nutritionPreferences = p; store.set('nutritionPreferences', p);
   },
-  nutriplan() { if (N.ready(S.nutritionPreferences, !!S.target)) { S.nutritionSectionTab = 'plan'; toast('✅ Plan nutricional listo'); if (S.target && S.pdfMonth !== today().slice(0, 7)) ACT.pdfmonth(); } },
+  nutriplan() { if (N.ready(S.nutritionPreferences, !!S.target)) { S.nutritionSectionTab = 'plan'; toast('✅ Plan nutricional listo'); if (S.target && S.pdfWeek !== mondayOf(today())) ACT.pdfweek({ off: '0' }); } },
   menuday(d) { S.menuDay = +d.i || 0; },
   dietnew() { if (dietLockActive()) return; S.dietLock = null; S.target = null; S.profile = null; store.set('dietLock', null); persist('profile', 'target'); },
   menuregen() { S.menuSeed++; store.set('menuSeed', S.menuSeed); },
@@ -1708,6 +1741,16 @@ const ACT = {
   cookdays(d) { S.cookDays = +d.n || 0; store.set('cookDays', S.cookDays); S.batchIdx = 0; },
   menuweek(d) { S.menuWeek = Math.max(0, Math.min(3, (S.menuWeek || 0) + (+d.n || 0))); },
   weekseen() { S.menuWeekSeen = mondayOf(today()); store.set('menuWeekSeen', S.menuWeekSeen); },
+  async pdfweek(d) {
+    if (!S.target || !N.ready(S.nutritionPreferences, true)) return toast('Primero completa tu plan nutricional');
+    const off = +d?.off || 0, mon = shiftIsoDate(mondayOf(today()), 7 * off);
+    try { toast('📄 Generando el PDF de la semana…'); render(); await new Promise(r => setTimeout(r, 30));
+      const { buildWeekPdf } = await import('./pdf.js'); // carga diferida: si falla, solo falla el PDF, no la app
+      downloadPdf(buildWeekPdf(weekData(mon)), `AGRESSIVE-LIFT-semana-${mon}.pdf`);
+      if (!off) { S.pdfWeek = mon; store.set('pdfWeek', mon); } toast('✅ PDF descargado: míralo en Descargas');
+    } catch (e) { console.error(e); toast('⚠️ No pude crear el PDF: ' + (e.message || e)); }
+    render();
+  },
   async pdfmonth() {
     if (!S.target || !N.ready(S.nutritionPreferences, true)) return toast('Primero completa tu plan nutricional');
     try { toast('📄 Generando tu plan del mes…'); render(); await new Promise(r => setTimeout(r, 30));
@@ -1829,11 +1872,11 @@ function buildTrainingPlan(text, request = parseTrainingRequest(text)) {
   if (!request) return S.trainingPlan;
   const { days, split } = request;
   const ppl = [
-    { day: 'Push A', focus: 'Pecho, hombros y tríceps', blocks: ['Press inclinado con mancuernas 4x6-8', 'Press de pecho en máquina 3x8-10', 'Elevaciones laterales 3x12-15', 'Extensión de tríceps 3x10-12'] },
-    { day: 'Pull A', focus: 'Espalda y bíceps', blocks: ['Jalón al pecho 4x6-10', 'Remo con apoyo pectoral 4x8-10', 'Face pull 3x12-15', 'Curl inclinado 3x10-12'] },
+    { day: 'Push A', focus: 'Pecho, hombros y tríceps', blocks: ['Press inclinado con mancuernas 4x6-8', 'Press de pecho en máquina 3x8-10', 'Elevaciones laterales 3x12-15', 'Pájaros o pec deck inverso 3x12-15', 'Extensión de tríceps 3x10-12'] },
+    { day: 'Pull A', focus: 'Espalda y bíceps (sin hombros)', blocks: ['Jalón al pecho 4x6-10', 'Remo con apoyo pectoral 4x8-10', 'Pullover en polea 3x12-15', 'Curl inclinado 3x10-12'] },
     { day: 'Legs A', focus: 'Cuádriceps, isquios y gemelos', blocks: ['Prensa 4x6-10', 'Curl femoral sentado 4x8-12', 'Extensión de cuádriceps 3x12-15', 'Gemelo de pie 4x10-15'] },
-    { day: 'Push B', focus: 'Hombros y pecho', blocks: ['Press militar en máquina 4x6-10', 'Press de pecho en máquina 3x8-12', 'Elevaciones laterales en polea 4x12-15', 'Fondos o extensión de tríceps 3x10-15'] },
-    { day: 'Pull B', focus: 'Espalda alta y brazos', blocks: ['Remo en polea baja 4x8-12', 'Jalón unilateral 3x10-12', 'Pájaros o face pull 3x12-15', 'Curl en polea 3x10-15'] },
+    { day: 'Push B', focus: 'Hombros y pecho', blocks: ['Press militar en máquina 4x6-10', 'Press de pecho en máquina 3x8-12', 'Elevaciones laterales en polea 4x12-15', 'Pec deck inverso 3x12-15', 'Fondos o extensión de tríceps 3x10-15'] },
+    { day: 'Pull B', focus: 'Espalda alta y brazos', blocks: ['Remo en polea baja 4x8-12', 'Jalón unilateral 3x10-12', 'Remo con mancuerna apoyado 3x10-12', 'Curl en polea 3x10-15'] },
     { day: 'Legs B', focus: 'Glúteos e isquios', blocks: ['Hip thrust 4x6-10', 'Peso muerto rumano 3x8-10', 'Curl femoral 3x10-12', 'Gemelo sentado 4x12-15'] },
   ];
   const upperLower = [
@@ -1896,12 +1939,72 @@ function applyPlanToCalendar(from = -14) {
       }
       ks.forEach(k => { last[k] = iso; });
       S.dayMuscles[iso] = ks; delete S.dayRest[iso]; delete S.doneEx[iso];
-      S.routineEdits[iso] = strategicOrder(ks).flatMap(k => pickFor(k, perMuscle));
+      const idx = S.trainingPlan.findIndex(x => x.day === ses.day), variantOf = k => idx <= 0 ? 0 : S.trainingPlan.slice(0, idx).filter(x => (x.m || musclesForSession(x.day)).includes(k)).length; // mismo músculo en otra sesión del ciclo → otros ejercicios
+      S.routineEdits[iso] = strategicOrder(ks).flatMap(k => { const b = pickFor(k, perMuscle, variantOf(k)); if (k === 'hombros' && perMuscle >= 2) { const r = X.pickRear({ ...exOpts(), variant: variantOf(k) }); if (r) b.push(r); } return b; }); // deltoide posterior: con el empuje
     } else { delete S.dayMuscles[iso]; delete S.routineEdits[iso]; S.dayRest[iso] = true; }
   }
   ['dayMuscles', 'routineEdits', 'dayRest', 'doneEx', 'recNotes'].forEach(k => store.set(k, S[k]));
 }
 
+/* ---------- Auditoría de la rutina (funciona aunque esté bloqueada: solo corrige recuperación y ejercicios, no días ni división) ---------- */
+const REAR_RE = /face pull|p[aá]jaros|pec deck inverso|deltoide post/i;
+function normalizePlanMuscles() {
+  const fixes = [];
+  S.trainingPlan = S.trainingPlan.map(sn => { const ms = [...(sn.m || musclesForSession(sn.day))]; let blocks = [...(sn.blocks || [])], m = ms;
+    if (/pull/i.test(sn.day)) {
+      if (ms.includes('hombros')) { m = ms.filter(k => k !== 'hombros'); fixes.push(`Quité «Hombros» de ${sn.day}: el hombro se entrena en el día de empuje (nunca pegado al día siguiente).`); }
+      if (blocks.some(b => REAR_RE.test(b))) { blocks = blocks.filter(b => !REAR_RE.test(b)); if (!blocks.some(b => /remo con mancuerna/i.test(b))) blocks.push('Remo con mancuerna apoyado 3x10-12'); fixes.push(`Saqué el deltoide posterior de ${sn.day} (va con el día de empuje).`); }
+    }
+    if (/push/i.test(sn.day) && !blocks.some(b => REAR_RE.test(b))) { const i = blocks.findIndex(b => /lateral/i.test(b)); blocks.splice(i >= 0 ? i + 1 : blocks.length, 0, 'Pájaros o pec deck inverso 3x12-15'); fixes.push(`Añadí deltoide posterior a ${sn.day} (como en el ciclo de CBum: con pecho y tríceps).`); }
+    return { ...sn, m, blocks }; });
+  if (fixes.length) { store.set('trainingPlan', S.trainingPlan); }
+  return fixes;
+}
+/** Revisa los próximos 28 días: recuperación por músculo, ejercicios repetidos en <48 h y estructura del plan. */
+function auditPlan() {
+  const out = [], names = {}; let last = lastTrained(today());
+  for (let i = 0; i < 28; i++) {
+    const iso = shiftIsoDate(today(), i), ks = S.dayMuscles[iso] || [];
+    if (S.dayRest[iso] || !ks.length || (i === 0 && Object.values(S.logs).some(l => l.some(x => x.d === iso)))) { if (i === 0) last = lastTrained(today()); continue; }
+    for (const k of ks) { if (last[k]) { const h = Math.round((Date.parse(iso) - Date.parse(last[k])) / 36e5); if (h < X.REC_H[k]) out.push({ type: 'recovery', date: iso, k, hours: h, need: X.REC_H[k], prev: last[k] }); } }
+    for (const n of routineExercisesForDate(iso)) { const e = exByName(n); if (!e) continue; const p = names[e.id]; if (p && Math.round((Date.parse(iso) - Date.parse(p)) / 864e5) < 2) out.push({ type: 'dup', date: iso, name: e.n, prev: p }); names[e.id] = iso; }
+    ks.forEach(k => { last[k] = iso; });
+  }
+  S.trainingPlan.forEach(sn => { const ms = sn.m || musclesForSession(sn.day);
+    if (/pull/i.test(sn.day) && (ms.includes('hombros') || (sn.blocks || []).some(b => REAR_RE.test(b)))) out.push({ type: 'plan', text: `${sn.day} trabaja hombro/deltoide posterior (debe ir en el día de empuje)` }); });
+  return out;
+}
+function reviewPlan(apply = true) {
+  const before = auditPlan(), fixes = [];
+  if (apply && S.trainingConfigured) {
+    fixes.push(...normalizePlanMuscles()); applyPlanToCalendar(0);
+    for (let pass = 0; pass < 4; pass++) { // días editados a mano: quita solo el músculo que no se recuperó
+      const bad = auditPlan().filter(x => x.type === 'recovery'); if (!bad.length) break;
+      for (const b of bad) { const names = routineExercisesForDate(b.date).filter(n => exByName(n)?.k !== b.k); S.dayMuscles[b.date] = (S.dayMuscles[b.date] || []).filter(k => k !== b.k);
+        if (names.length) S.routineEdits[b.date] = names; else { delete S.routineEdits[b.date]; S.dayRest[b.date] = true; delete S.dayMuscles[b.date]; }
+        fixes.push(`${MUSCLES[b.k].n}: lo quité del ${longDay(b.date)} (entrenado hace ${Math.round(b.hours / 24)} d, necesita ${b.need} h).`); }
+      ['dayMuscles', 'routineEdits', 'dayRest'].forEach(k => store.set(k, S[k])); }
+  }
+  const after = auditPlan(), fmt = x => x.type === 'recovery' ? `${MUSCLES[x.k].n} el ${longDay(x.date)} (${Math.round(x.hours / 24)} d desde su última sesión; necesita ${x.need} h)` : x.type === 'dup' ? `${x.name} repetido el ${longDay(x.date)} (ya estaba el ${longDay(x.prev)})` : x.text;
+  const text = !before.length && !fixes.length ? '✅ Revisé tus próximos 28 días: cada músculo tiene su recuperación (48 h; 72 h en piernas y espalda), no hay ejercicios repetidos en días seguidos y el deltoide posterior va con el empuje. No hay nada que corregir.'
+    : `🔎 Revisé tus próximos 28 días.\n\n${before.length ? 'Encontré:\n• ' + before.map(fmt).join('\n• ') + '\n\n' : ''}${apply ? 'Corregí:\n• ' + ([...new Set(fixes)].join('\n• ') || 'Regeneré el calendario con las reglas de recuperación.') + '\n\n' : ''}${after.length ? '⚠️ Queda pendiente (por tu esquema de días): ' + after.map(fmt).join('; ') : '✅ Ahora todo cumple la recuperación y no se repiten ejercicios en días seguidos.'}`;
+  return { before, after, fixes, text };
+}
+/** Comando adjust_routine de la IA (permitido aunque la rutina esté bloqueada): solo acciones validadas, sin tocar días ni división. */
+function applyAdjustments(pl) {
+  const acts = Array.isArray(pl?.actions) ? pl.actions.slice(0, 8) : [], done = [];
+  for (const a of acts) {
+    if (a?.type === 'fix_recovery') { const r = reviewPlan(true); done.push(r.fixes.length ? r.fixes.join(' ') : 'Revisé la recuperación y no había nada que corregir.'); }
+    else if (a?.type === 'replace_exercise') { const k = String(a.muscle || '').toLowerCase(), e = X.EXDB.find(x => x.n.toLowerCase() === String(a.name || '').toLowerCase()), slot = a.slot === 1 ? 1 : 0;
+      if (!MUSCLES[k] || !e || e.k !== k || !X.usable(e, exOpts()) || avoidList().includes(e.n)) { done.push(`No pude aplicar «${a.name}» (no es un ejercicio válido para ${k || 'ese músculo'}).`); continue; }
+      const names = pickFor(k, 2).map(clean); names[slot] = e.n; S.exPicks[k] = names; store.set('exPicks', S.exPicks); applyPlanToCalendar(0); done.push(`Cambié ${MUSCLES[k].n} (${slot ? 'complemento' : 'principal'}) por ${e.n}.`); }
+    else if (a?.type === 'remove_muscle') { const iso = String(a.date || ''), k = String(a.muscle || '').toLowerCase();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(iso) || iso < today() || iso > shiftIsoDate(today(), 28) || !MUSCLES[k]) { done.push('Ignoré un ajuste con fecha o músculo inválido.'); continue; }
+      const names = routineExercisesForDate(iso).filter(n => exByName(n)?.k !== k); S.dayMuscles[iso] = (S.dayMuscles[iso] || []).filter(m => m !== k);
+      if (names.length) S.routineEdits[iso] = names; else { delete S.routineEdits[iso]; S.dayRest[iso] = true; delete S.dayMuscles[iso]; } S.customDay[iso] = true; ['dayMuscles', 'routineEdits', 'dayRest', 'customDay'].forEach(z => store.set(z, S[z])); done.push(`Quité ${MUSCLES[k].n} del ${longDay(iso)}.`); }
+  }
+  return done.length ? '🛠️ Ajustes aplicados:\n• ' + done.join('\n• ') : '';
+}
 const planDetails = () => S.trainingPlan.map(day => `${day.day} (${day.focus}):\n• ${day.blocks.join('\n• ')}`).join('\n\n');
 function coachReply(text, request = parseTrainingRequest(text)) {
   const t = (text || '').toLowerCase();
@@ -2086,7 +2189,13 @@ function applyRoutineCommand(pl) {
   applyPlanToCalendar();
   return startNote;
 }
+const REVIEW_INTENT = t => /(revis|valid|corrig|arregl|ajust|audit|verific|chequ)/.test(t) && /(rutina|plan|calendario|hombro|descans|recuper|ejercicio|repet)/.test(t);
 async function sendCoachMessage(text) {
+  const nrm = text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  if (S.trainingConfigured && REVIEW_INTENT(nrm)) { // revisar/corregir: se hace SIEMPRE en local (aunque la rutina esté bloqueada) y la IA comenta después
+    const r = reviewPlan(true); S.coachChat.push({ role: 'user', text }, { role: 'assistant', text: r.text }); S.coachChat = S.coachChat.slice(-60); store.set('coachChat', S.coachChat); S.note = r.text; store.set('note', r.text);
+    if (!(AI_ON || CONFIG_OK)) return render(); text += ' (Ya apliqué la auditoría local; comenta y, si hace falta, ajusta con adjust_routine.)';
+  }
   if (!(AI_ON || CONFIG_OK)) return coachLocal(text, true); // sin IA: modo local por reglas
   if (S.coachBusy) return;
   S.coachChat.push({ role: 'user', text }, { role: 'assistant', text: '🤖 Pensando…' });
@@ -2096,10 +2205,11 @@ async function sendCoachMessage(text) {
     const result = await ai('coach', { task: 'training', systemPrompt: TRAINER_SYSTEM_PROMPT, currentMessage: text,
       hoy: today(), diaSemana: new Date().toLocaleDateString('es-CO', { weekday: 'long' }), planConfigurado: S.trainingConfigured,
       planLock: lock ? S.planLock : null, schedule: S.trainingConfigured ? S.trainingSchedule : null, trainingPlan: S.trainingConfigured ? S.trainingPlan : null,
-      calendario: S.trainingConfigured ? calPreview() : null, preferences: S.trainingPreferences, ultimoEntrenoRegistrado: lastWorkoutFromLogs(),
+      calendario: S.trainingConfigured ? calPreview() : null, auditoria: S.trainingConfigured ? auditPlan().slice(0, 8) : null, preferences: S.trainingPreferences, ultimoEntrenoRegistrado: lastWorkoutFromLogs(),
       goalGuide: S.trainingPreferences.goal && GOALS[S.trainingPreferences.goal] ? { goal: S.trainingPreferences.goal, ...GOALS[S.trainingPreferences.goal] } : null,
       recentMessages: hist(S.coachChat) });
     let out = String(result.note || '').trim() || 'Listo.';
+    if (result.command === 'adjust_routine') { const t2 = applyAdjustments(result.payload); if (t2) out += '\n\n' + t2; }
     if (result.command === 'update_routine') {
       if (lock) out += '\n\n' + lockMsg();
       else { const sn = applyRoutineCommand(result.payload);
@@ -2261,6 +2371,7 @@ if (CONFIG_OK) {
   document.addEventListener('visibilitychange', () => { if (!document.hidden && S.user && Date.now() - lastCheck > 3e5) { lastCheck = Date.now(); gate({ user: S.user }); } });
 } else { gate(); }
 try { migrateCalendar(); } catch (e) { console.error(e); }
+try { if (S.trainingConfigured && store.get('calFix') !== 'v31') { normalizePlanMuscles(); applyPlanToCalendar(0); store.set('calFix', 'v31'); } } catch (e) { console.error(e); }
 try { if (S.planLock && !store.get('comfortSeen')) { S.comfortUntil = dAdd(6); store.set('comfortUntil', S.comfortUntil); store.set('comfortSeen', true); } } catch (e) { console.error(e); }
 try { if (!S.menuWeekSeen) { S.menuWeekSeen = mondayOf(today()); store.set('menuWeekSeen', S.menuWeekSeen); } checkBadges(false); } catch (e) { console.error(e); }
 maybeTitan();
