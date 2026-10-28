@@ -247,3 +247,41 @@ details>summary{cursor:pointer}
 .shin{padding:9px 10px;font-size:16px}
 .shop-sum{display:flex;justify-content:space-between;gap:8px;font-size:13px;color:#a1a1aa;margin:8px 0}.shop-sum b{color:#fff}
 .line-through{text-decoration:line-through}
+
+/* ================= v33: acabado profesional + previews de ejercicio ================= */
+:root{--r-lg:16px;--r-md:12px;--hair:rgba(255,255,255,.08)}
+html,body{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;font-variant-numeric:tabular-nums}
+.card{border-radius:var(--r-lg);border:1px solid var(--hair);background:linear-gradient(180deg,#131418,#0b0b0e);box-shadow:inset 0 1px 0 rgba(255,255,255,.04),0 10px 24px -12px rgba(0,0,0,.75);padding:14px}
+.card.on{border-color:rgba(255,43,87,.75);box-shadow:0 0 0 1px rgba(255,43,87,.25),0 12px 28px -12px rgba(255,43,87,.4)}
+.btn{border-radius:var(--r-md);font-weight:800;letter-spacing:.04em;transition:transform .12s ease,background .2s ease,box-shadow .2s ease,border-color .2s ease}
+.btn:active{transform:scale(.98)}
+.btn.fill{border-color:transparent;background:linear-gradient(180deg,#ff3a5f,#e8002f);color:#fff;box-shadow:0 8px 20px -8px rgba(255,43,87,.75)}
+.btn.ghost{border-color:var(--hair);background:rgba(255,255,255,.03)}
+.chip{border-color:var(--hair);transition:transform .12s ease,border-color .2s ease,background .2s ease}.chip:active{transform:scale(.97)}
+input,select{border-radius:var(--r-md);background:#0b0c0f;border-color:#2c2d33}
+.tabbar{padding:10px 0;border-bottom:1px solid var(--hair);background:rgba(4,4,5,.88);backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%)}
+.tabbar .chip{border-radius:12px;min-height:46px;font-weight:800;letter-spacing:.03em}.tabbar .chip.on{box-shadow:inset 0 -2px 0 var(--red)}
+.sheet{backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)}
+.sheet>div{border-radius:22px 22px 0 0;border-top:1px solid rgba(255,43,87,.6);box-shadow:0 -20px 50px rgba(0,0,0,.6)}
+.sheet>div::before{content:"";display:block;width:40px;height:4px;border-radius:4px;background:#3a3a42;margin:-6px auto 12px}
+.stat{border-radius:var(--r-md);border-color:var(--hair)}
+.toast{box-shadow:0 10px 30px -8px rgba(0,0,0,.8),var(--glow)}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid #fff;outline-offset:2px}
+.routine-exercise-row{grid-template-columns:minmax(0,1fr) repeat(3,44px);gap:6px;min-height:56px}
+.routine-exercise-row .icon-btn{width:44px;height:44px;border-radius:10px}
+
+/* Previews de ejercicio: miniatura, guía en la tarjeta, aparición suave y bucle sin parpadeo */
+.exthumb{flex:none;width:58px;height:58px;border-radius:12px;overflow:hidden;background:#f4f4f5;display:flex;align-items:center;justify-content:center;border:1px solid var(--hair);font-size:22px;color:#18181b}
+.exthumb img{width:100%;height:100%;object-fit:cover;display:block}
+.exbtn{overflow:hidden;padding:0}.exbtn img{width:100%;height:100%;object-fit:cover;display:block;border-radius:inherit;background:#f4f4f5}
+.exguide{margin:10px 0 4px;padding:10px;border:1px solid var(--hair);border-radius:var(--r-md);background:rgba(255,255,255,.025);cursor:pointer}
+.exmedia.sm{aspect-ratio:4/3;max-height:210px}
+.exmedia.fallback{aspect-ratio:auto;height:170px;background:radial-gradient(ellipse at 50% 50%,#181b20 0,#050506 72%)}
+.exmedia.fallback.sm{height:150px}
+.exmedia img{transition:opacity .25s ease;backface-visibility:hidden;transform:translateZ(0)}
+.exmedia .fb{animation:xfade 2.4s ease-in-out infinite}
+.exmedia.ready{animation:fadein .35s ease-out}
+.extags{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.extag{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--hair);color:#d4d4d8;background:rgba(255,255,255,.04)}
+.excues.sm{margin-top:10px}.excues.sm li{font-size:13.5px}
+@media (prefers-reduced-motion:reduce){.exmedia .fb{animation:none;opacity:0}.exmedia.ready{animation:none}.btn,.chip{transition:none}}

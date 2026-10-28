@@ -449,10 +449,11 @@ function exCard(e) {
   const work = sets.filter(x => x.t !== 'w' && x.t !== 'drop'), plan = e.sets || 3;
   const sg = open ? exAdvice(e.id) : null;
   return `<div class="card ${open ? 'on' : ''} ${done ? 'done' : ''}">
-  <div class="flex justify-between items-start" data-act="toggle" data-id="${e.id}">
-    <div><div class="font-bold text-lg leading-tight">${done ? '✅ ' : ''}${esc(name)}${e.swapFrom ? ' <span class="text-xs neon">SWAP</span>' : ''}</div>
+  <div class="flex items-center gap-3" data-act="toggle" data-id="${e.id}">
+    ${exThumb(name)}<div class="flex-1 min-w-0"><div class="font-bold text-lg leading-tight">${done ? '✅ ' : ''}${esc(name)}${e.swapFrom ? ' <span class="text-xs neon">SWAP</span>' : ''}</div>
     <div class="text-xs text-zinc-500">${e.m}${e.sets ? ` · plan ${e.sets}×${e.rng}` : ''} · ${work.length}/${plan} series${e.fin ? ' · <span class="neon">🔥 finalizador</span>' : ''}</div></div><span class="neon">${open ? '▾' : '▸'}</span></div>
   ${open ? `
+  ${exGuide(e, name)}
   ${sets.map((x, i) => `<div class="text-sm text-zinc-400 mt-2 ${S.fresh === e.id && i === sets.length - 1 ? 'pop' : ''}">${setLabel(x.t)} · ${x.w} kg × ${x.r}${x.t === 'w' ? '' : ` · RIR ${x.rir}`}${x.fail && x.fail !== 'Músculo objetivo' ? ` · limitó: ${x.fail}` : ''}</div>`).join('')}
   <div class="card !p-2 mt-2 text-sm ${sg.action === 'descarga' ? 'on' : ''}"><b class="neon">${sg.action.toUpperCase()}</b>${sg.w ? ' · ' + sg.w + ' kg' : ''}<div class="text-zinc-400">${esc(sg.note)}</div></div>
   ${spark(e1h(e.id))}
@@ -749,7 +750,7 @@ function weekData(mon) {
     return { n: b.no, carry, cookLabel: longDay(b.start), range: label, nDays: b.n, beyond: b.end > isos[6], groceries: cb.groceries, tasks: cb.tasks, recipes,
       strip: dates.map(iso => ({ top: `${DN[dow(iso)]} ${iso.slice(8)}`, kind: iso === b.start ? 'cook' : isTrain(iso) ? 'train' : 'rest', dim: !inWeek.has(iso) })), days: dayObjs }; }).filter(b => b.days.length);
   return { name: PROFILES[profile], week: { label: `${shortDate(mon)} al ${shortDate(isos[6])} ${isos[6].slice(0, 4)}` }, generated: fmtLong(today()), target: t, days, batches,
-    training: isos.map((iso, i) => ({ name: DNL[i], date: shortDate(iso), train: sess(iso) || 'Descanso', muscles: (S.dayMuscles[iso] || []).map(k => MUSCLES[k].n) })),
+    training: isos.map((iso, i) => ({ name: DNL[i], date: shortDate(iso), train: sess(iso) || 'Descanso', muscles: (S.dayMuscles[iso] || []).map(k => MUSCLES[k].n), exercises: (S.routineEdits[iso] || []).slice() })),
     strategy: N.strategy({ target: t, prefs, goal: S.profile?.goal || 'maint', trainDays: sch?.days || 3 }) };
 }
 /** Datos del PDF mensual (resumen): 4 semanas con menú, horarios, entrenos, compras y cocina. */
@@ -886,7 +887,7 @@ const routineDayPanel = () => {
     <div class="flex justify-between items-center mt-3"><span class="text-xs text-zinc-500">Ejercicios del día</span><button class="btn" data-act="addroutineexercise">＋ Añadir ejercicio</button></div>
     ${exercises.length ? '<div class="text-xs text-zinc-500 mt-2">Orden estratégico: músculos grandes y priorizados primero · compuesto pesado → aislamiento · el 🔥 finalizador va con drop set para llevar el músculo al límite.</div>' : ''}<div class="routine-exercise-list">${exercises.map((exercise, index) => `<div class="routine-exercise-row">
       <span class="routine-exercise-name">${index + 1}. ${esc(exercise)}${cardsFor(iso)[index]?.fin ? ' <span class="text-xs neon">🔥 finalizador</span>' : ''}</span>
-      <button class="icon-btn" data-act="exercisevideo" data-index="${index}" aria-label="Ver ${esc(exercise)}" title="Ver ejercicio">▶</button>
+      <button class="icon-btn exbtn" data-act="exercisevideo" data-index="${index}" aria-label="Ver ${esc(exercise)}" title="Ver ejercicio">${exThumbImg(clean(exercise))}</button>
       <button class="icon-btn" data-act="editroutineexercise" data-index="${index}" aria-label="Editar ${esc(exercise)}" title="Editar">✎</button>
       <button class="icon-btn" data-act="removeroutineexercise" data-index="${index}" aria-label="Eliminar ${esc(exercise)}" title="Eliminar">×</button>
     </div>`).join('') || '<div class="text-sm text-zinc-500 py-2">Aún no hay ejercicios: marca músculos y pulsa Generar.</div>'}</div>`}
@@ -1101,44 +1102,56 @@ const exerciseMotionType = name => {
 /* ---------- Imágenes reales del ejercicio: free-exercise-db (dominio público) ---------- */
 const EXDB_URL = 'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/dist/exercises.json';
 const EXIMG = 'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/';
-const EN = { // nombre en español → nombres probables en inglés del catálogo
-  'press-inclinado-con-mancuernas': ['incline dumbbell press'], 'aperturas-en-polea': ['cable crossover', 'cable fly', 'low cable crossover'],
-  'jalon-al-pecho': ['wide-grip lat pulldown', 'lat pulldown'], 'remo-con-apoyo-pectoral': ['seated cable rows', 'machine row', 'bent over barbell row'],
-  'press-militar-en-maquina': ['machine shoulder (military) press', 'shoulder press'], 'elevaciones-laterales-en-polea': ['cable seated lateral raise', 'side lateral raise', 'lateral raise'],
-  'curl-inclinado-con-mancuernas': ['incline dumbbell curl', 'alternate incline dumbbell curl'], 'curl-predicador': ['preacher curl', 'ez-bar preacher curl'],
-  'extension-de-triceps-en-polea': ['triceps pushdown', 'triceps pushdown rope attachment'], 'press-frances-con-barra-z': ['ez-bar skullcrusher', 'lying triceps press'],
-  'crunch-en-polea': ['cable crunch', 'kneeling cable crunch'], 'elevacion-de-piernas-colgado': ['hanging leg raise'],
-  'prensa-de-piernas': ['leg press'], 'extension-de-cuadriceps': ['leg extensions', 'leg extension'], 'curl-femoral-sentado': ['seated leg curl'],
-  'curl-femoral-tumbado': ['lying leg curls'], 'peso-muerto-rumano': ['romanian deadlift'], 'hip-thrust': ['barbell hip thrust', 'hip thrust'],
-  'sentadilla-bulgara': ['bulgarian split squat', 'split squat with dumbbells', 'single leg squat'], 'gemelo-de-pie': ['standing calf raises', 'standing calf raise'],
-  'gemelo-sentado': ['seated calf raise'], 'press-de-pecho-en-maquina': ['machine bench press', 'chest press machine'], 'pullover-en-polea': ['straight-arm pulldown', 'pullover'],
-  'face-pull': ['face pull'], 'hack-squat': ['hack squat'], 'press-arnold': ['arnold dumbbell press'],
-};
+const EN = X.EN; // nombres en inglés de los 76 ejercicios de la base (ver exdb.js)
 const TR = { press: 'press', inclinado: 'incline', declinado: 'decline', mancuernas: 'dumbbell', mancuerna: 'dumbbell', barra: 'barbell', polea: 'cable', maquina: 'machine', jalon: 'pulldown', remo: 'row', extension: 'extension', elevaciones: 'raise', laterales: 'lateral', sentadilla: 'squat', prensa: 'leg press', muerto: 'deadlift', gemelo: 'calf', femoral: 'leg curl', cuadriceps: 'leg extension', pecho: 'chest', hombro: 'shoulder', espalda: 'back', fondos: 'dips', dominadas: 'pull-up', plancha: 'plank', zancadas: 'lunge', martillo: 'hammer', predicador: 'preacher', aperturas: 'fly', cruces: 'crossover', encogimientos: 'shrug', frances: 'skullcrusher' };
 const enGuess = name => slug(clean(name)).split('-').map(w => TR[w] ?? w).filter(w => !['de', 'en', 'con', 'la', 'el', 'sentado', 'pie'].includes(w)).join(' ');
 const norm = t => t.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 function matchEx(db, name) {
   const qs = EN[slug(clean(name))] || [enGuess(name)];
   for (const q of qs) { const hit = db.find(r => norm(r[0]) === norm(q)); if (hit) return hit; }
+  for (const q of qs) { const nq = norm(q); if (nq.length > 8) { const hit = db.find(r => norm(r[0]).startsWith(nq)); if (hit) return hit; } }
   let best = null, bs = 0;
   for (const q of qs) { const qt = new Set(norm(q).split(' ')); for (const r of db) { const rt = new Set(norm(r[0]).split(' ')); let k = 0; qt.forEach(w => rt.has(w) && k++); const sc = k / Math.max(qt.size, rt.size); if (sc > bs) { bs = sc; best = r; } } }
-  return bs >= 0.6 ? best : null;
+  return bs >= 0.55 ? best : null;
+}
+/* Catálogo de fotos: se descarga UNA vez (~100 KB) y queda guardado en el teléfono; si falla, reintenta a los 20 s. */
+let exdbP = null;
+const exdbGet = () => store.get('exdb', null);
+function ensureExdb() {
+  if (exdbGet()) return Promise.resolve(exdbGet());
+  return (exdbP ||= fetch(EXDB_URL).then(r => { if (!r.ok) throw new Error('db'); return r.json(); })
+    .then(j => { const db = j.filter(x => x.images?.length).map(x => [x.name, x.images[0], x.images[1] || x.images[0]]); store.set('exdb', db); return db; })
+    .catch(() => { setTimeout(() => { exdbP = null; }, 20000); return null; }));
+}
+const EXM = {}, PRE = new Set();
+const preloadImgs = m => [m.a, m.b].forEach(src => { if (PRE.has(src)) return; PRE.add(src); const im = new Image(); im.decoding = 'async'; im.src = src; });
+/** Foto/animación del ejercicio SIN esperar: objeto = hay; false = no está en el catálogo; undefined = el catálogo aún se descarga. */
+function exMedia(name) {
+  const k = slug(clean(name)); if (k in EXM) return EXM[k];
+  const db = exdbGet();
+  if (!db) { if (!exdbP) ensureExdb().then(d => { if (d) render(); }); return undefined; }
+  const hit = matchEx(db, name), m = hit ? { n: hit[0], a: EXIMG + hit[1], b: EXIMG + hit[2] } : false;
+  if (m) preloadImgs(m); // se precargan al dibujar la tarjeta: al abrir el ejercicio ya están en memoria
+  return (EXM[k] = m);
 }
 async function loadExMedia(name) {
-  let media = null;
-  try {
-    let db = store.get('exdb', null);
-    if (!db) { // se descarga una vez (~100 KB tras compactar) y queda guardada en el teléfono
-      const r = await fetch(EXDB_URL); if (!r.ok) throw new Error('db');
-      db = (await r.json()).filter(x => x.images?.length).map(x => [x.name, x.images[0], x.images[1] || x.images[0]]); store.set('exdb', db);
-    }
-    const hit = matchEx(db, name);
-    if (hit) { // precarga y decodifica ambos fotogramas ANTES de mostrarlos: la animación no parpadea ni se corta
-      media = { n: hit[0], a: EXIMG + hit[1], b: EXIMG + hit[2] };
-      await Promise.all([media.a, media.b].map(src => new Promise(res => { const im = new Image(); im.onload = () => (im.decode ? im.decode().catch(() => {}).then(res) : res()); im.onerror = res; im.src = src; })));
-    }
-  } catch {}
-  if (S.modal?.type === 'exercisevideo' && S.modal.name === name) { S.modal = { ...S.modal, loading: false, media }; render(); }
+  let media = exMedia(name);
+  if (media === undefined) { await ensureExdb(); media = exMedia(name); }
+  if (media) await Promise.all([media.a, media.b].map(src => new Promise(res => { const im = new Image(); im.onload = () => (im.decode ? im.decode().catch(() => {}).then(res) : res()); im.onerror = res; im.src = src; })));
+  if (S.modal?.type === 'exercisevideo' && S.modal.name === name) { S.modal = { ...S.modal, loading: false, media: media || null }; render(); }
+}
+const exThumbImg = (name, ph = '▶') => { const m = exMedia(name); return m ? `<img src="${m.a}" alt="" loading="lazy" decoding="async">` : ph; };
+const exThumb = name => `<span class="exthumb" aria-hidden="true">${exThumbImg(name, '🏋️')}</span>`;
+/** Respaldo SIEMPRE disponible: figura animada del movimiento (todo ejercicio tiene preview aunque no esté en el catálogo de fotos). */
+const motionStage = (type, small) => `<div class="exmedia fallback ${small ? 'sm' : ''} ready"><svg class="motion-demo-svg motion-${type}" viewBox="0 0 200 120" aria-hidden="true"><g class="motion-figure"><circle class="motion-outline" cx="100" cy="30" r="9"/><path class="motion-outline" d="M100 40v34M100 74l-16 30M100 74l16 30M100 50l-24 14M100 50l24 14"/></g><line class="motion-bar" x1="62" y1="62" x2="138" y2="62"/></svg><span class="exbadge">Guía de movimiento</span></div>`;
+const REST_TXT = { H: '2:30-4 min', M: '1:30-2:30 min', L: '1-1:30 min', S: '45-60 s' };
+/** Guía dentro de la tarjeta abierta: animación + equipo + series + descanso + 3 pasos de técnica. Tocarla abre el detalle. */
+function exGuide(e, name) {
+  const m = exMedia(name), type = exerciseMotionType(name), cues = CUES[type] || CUES.push;
+  const stage = m ? `<div class="exmedia sm ready"><img class="fa" src="${m.a}" alt="${esc(name)} posición inicial" decoding="async"><img class="fb" src="${m.b}" alt="${esc(name)} posición final" decoding="async"><span class="exbadge">▶ Toca para ver completo</span></div>`
+    : m === undefined ? '<div class="exmedia sm skeleton"><span class="exbadge">Cargando…</span></div>' : motionStage(type, true);
+  const tags = [X.EQ?.[e.eq], e.sets ? `${e.sets}×${e.rng}` : '', e.uni ? 'peso por mano' : '', e.rest ? `descanso ${REST_TXT[e.rest]}` : ''].filter(Boolean).map(t => `<span class="extag">${esc(t)}</span>`).join('');
+  return `<div class="exguide" data-act="exercisevideo" data-exercise="${esc(name)}">${stage}<div class="exinfo"><div class="extags">${tags}</div><ol class="excues sm">${cues.map((c, i) => `<li><b class="neon">${i + 1}</b><span>${esc(c)}</span></li>`).join('')}</ol></div></div>`;
 }
 
 /* ---------- Video del ejercicio DENTRO de la app (YouTube Data API + reproductor incrustado) ---------- */
@@ -1432,10 +1445,10 @@ const sheet = () => {
     const cues = CUES[m.motion] || CUES.push, enQ = m.media?.n || enGuess(m.name);
     const ytEs = videoUrl(m.name), ytEn = 'https://www.youtube.com/results?search_query=' + encodeURIComponent('how to ' + enQ + ' proper form');
     const stage = m.media
-      ? `<div class="exmedia"><img class="fa" src="${m.media.a}" alt="${esc(m.name)} posición inicial" decoding="async"><img class="fb" src="${m.media.b}" alt="${esc(m.name)} posición final" decoding="async"><span class="exbadge">▶ Ejercicio completo · en bucle</span></div>
+      ? `<div class="exmedia ready"><img class="fa" src="${m.media.a}" alt="${esc(m.name)} posición inicial" decoding="async"><img class="fb" src="${m.media.b}" alt="${esc(m.name)} posición final" decoding="async"><span class="exbadge">▶ Ejercicio completo · en bucle</span></div>
          <div class="exframes"><figure><img src="${m.media.a}" alt="Inicio"><figcaption>1 · Inicio</figcaption></figure><div class="exarrow">→</div><figure><img src="${m.media.b}" alt="Final"><figcaption>2 · Final</figcaption></figure></div>`
       : m.loading ? '<div class="exmedia skeleton"><span class="exbadge">Cargando ejercicio…</span></div>'
-      : '<div class="exmedia empty"><div>🎬<br>No hay animación para este ejercicio.<br><b>Míralo completo en YouTube ↓</b></div></div>';
+      : motionStage(m.motion) + '<div class="text-xs text-zinc-500 mt-1">Sin foto en el catálogo para este ejercicio: sigue la guía y mira el video completo en YouTube ↓</div>';
     return `<div class="sheet"><div class="exercise-modal">
     <div class="flex justify-between items-start gap-2"><div><div class="text-xs text-zinc-500 uppercase tracking">Cómo se hace</div><div class="font-bold text-lg">${esc(m.name)}</div></div><button class="icon-btn" data-act="closemodal" aria-label="Cerrar">×</button></div>
     ${ytBlock(m)}
@@ -1728,8 +1741,9 @@ const ACT = {
   },
   exercisevideo(d) {
     const name = d.exercise || routineExercisesForDate(S.routineDate)[Number(d.index)] || 'Ejercicio';
-    S.modal = { type: 'exercisevideo', name, motion: exerciseMotionType(name), loading: true, media: null, ytLoading: !!S.ytkey };
-    loadExMedia(name); loadYT(name);
+    const m0 = exMedia(name); // si la tarjeta ya la precargó, el modal abre sin esperar
+    S.modal = { type: 'exercisevideo', name, motion: exerciseMotionType(name), loading: m0 === undefined, media: m0 || null, ytLoading: !!S.ytkey };
+    if (m0 === undefined) loadExMedia(name); loadYT(name);
   },
   closemodal() { if (S.modal?.type === 'titan') store.set('titanSeen', today()); S.modal = null; },
   acr(d) { if (GLOSSARY[d.k]) S.modal = { type: 'acr', k: d.k }; },
@@ -2067,7 +2081,7 @@ const lastTrained = before => { const last = {}; for (const [id, rows] of Object
 function applyPlanToCalendar(from = -14) {
   const level = S.trainingPreferences.level, dur = parseInt(S.trainingPreferences.duration) || 0, perMuscle = level === 'principiante' || (dur && dur <= 45) ? 1 : 2; // sesiones cortas: 1 ejercicio por músculo
   const hasLogs = iso => Object.values(S.logs).some(l => l.some(x => x.d === iso));
-  const last = lastTrained(); S.recNotes = {};
+  const last = lastTrained(); S.recNotes = {}; const weekSeen = {}; // ejercicios ya usados en cada semana (para no repetirlos en otro día)
   for (let i = from; i < (S.planLock?.weeks ? S.planLock.weeks * 7 : 28); i++) {
     const iso = shiftIsoDate(today(), i);
     if (hasLogs(iso) || (i >= 0 && S.customDay[iso])) { (S.dayMuscles[iso] || []).forEach(k => { if (!last[k] || iso > last[k]) last[k] = iso; }); continue; }
@@ -2086,8 +2100,17 @@ function applyPlanToCalendar(from = -14) {
       }
       ks.forEach(k => { last[k] = iso; });
       S.dayMuscles[iso] = ks; delete S.dayRest[iso]; delete S.doneEx[iso];
-      const idx = S.trainingPlan.findIndex(x => x.day === ses.day), variantOf = k => idx <= 0 ? 0 : S.trainingPlan.slice(0, idx).filter(x => (x.m || musclesForSession(x.day)).includes(k)).length; // mismo músculo en otra sesión del ciclo → otros ejercicios
-      S.routineEdits[iso] = strategicOrder(ks).flatMap(k => { const b = pickFor(k, perMuscle, variantOf(k)); if (k === 'hombros' && perMuscle >= 2) { const r = X.pickRear({ ...exOpts(), variant: variantOf(k) }); if (r) b.push(r); } return b; }); // deltoide posterior: con el empuje
+      const idx = S.trainingPlan.findIndex(x => x.day === ses.day), variantOf0 = k => idx <= 0 ? 0 : S.trainingPlan.slice(0, idx).filter(x => (x.m || musclesForSession(x.day)).includes(k)).length; // mismo músculo en otra sesión del ciclo → otros ejercicios
+      const totalK = k => S.trainingPlan.filter(x => (x.m || musclesForSession(x.day)).includes(k)).length || 1;
+      const dow = (new Date(iso + 'T12:00:00').getDay() + 6) % 7; let occ = 0; // la misma sesión repetida en la semana (p. ej. Push A el miércoles y el domingo) usa OTRA variante de ejercicios
+      for (let j = dow; j > 0; j--) { const s2 = routineSessionForDate(shiftIsoDate(iso, -j)); if (s2 && s2.day === ses.day) occ++; }
+      const variantOf = k => variantOf0(k) + occ * totalK(k);
+      const raw = strategicOrder(ks).flatMap(k => { const b = pickFor(k, perMuscle, variantOf(k)); if (k === 'hombros' && perMuscle >= 2) { const r = X.pickRear({ ...exOpts(), variant: variantOf(k) }); if (r) b.push(r); } return b; }); // deltoide posterior: con el empuje
+      // Garantía final: ningún ejercicio se repite en el mismo día ni en otro día de la misma semana; si choca, se cambia por una alternativa real del mismo músculo.
+      const seenW = (weekSeen[shiftIsoDate(iso, -dow)] ||= new Set()), mine = new Set(), eo = exOpts(), bad = avoidList();
+      S.routineEdits[iso] = raw.map(b => { const e = exByName(b); if (!e) return b; if (!seenW.has(e.id) && !mine.has(e.id)) { mine.add(e.id); return b; }
+        const alt = X.swapOptions(e, { exclude: [...seenW, ...mine], equip: eo.equip, place: eo.place, n: 8 }).find(c => !bad.includes(c.n)); if (!alt) return null; mine.add(alt.id); return `${alt.n} ${alt.sets}×${alt.rng}`; }).filter(Boolean);
+      mine.forEach(id => seenW.add(id));
     } else { delete S.dayMuscles[iso]; delete S.routineEdits[iso]; S.dayRest[iso] = true; }
   }
   ['dayMuscles', 'routineEdits', 'dayRest', 'doneEx', 'recNotes'].forEach(k => store.set(k, S[k]));

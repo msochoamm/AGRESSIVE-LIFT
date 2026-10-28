@@ -279,10 +279,16 @@ function batchPages(d, b) {
 }
 function trainingPage(d, data) {
   d.newPage(); d.rect(M, d.y - 28, CW, 28, COL.ink); d.rect(M, d.y - 28, 5, 28, COL.red); d.txt(M + 14, d.y - 19, 'ENTRENAMIENTO DE LA SEMANA', 12, true, COL.white); d.y -= 34;
-  (data.training || []).forEach((t, i) => { d.need(30); const tr = t.train && !/descanso/i.test(t.train), y0 = d.y - 28; d.rect(M, y0, CW, 28, i % 2 ? [1, 1, 1] : [.97, .97, .98]); d.rect(M, y0, 4, 28, tr ? COL.red : COL.line);
-    d.txt(M + 12, y0 + 16, `${t.name} ${t.date}`, 10, true, COL.ink); d.txt(M + 12, y0 + 5, tr ? t.muscles.join(' · ') : 'Descanso: come lo cocinado, camina y duerme bien', 8.5, false, COL.mut);
-    d.txtR(M + CW - 10, y0 + 10, tr ? t.train : 'Descanso', 10, true, tr ? COL.red : COL.mut); d.y = y0; });
-  d.y -= 10; d.para('Recuperación: cada músculo descansa 48 h (72 h piernas y espalda) antes de volver a entrenarse. El deltoide posterior va con el día de empuje.', { size: 8.8, color: COL.mut });
+  (data.training || []).forEach((t, i) => {
+    const tr = t.train && !/descanso/i.test(t.train), ex = tr ? (t.exercises || []) : [], h = 28 + (ex.length ? 8 + ex.length * 12 : 0);
+    d.need(h + 4); const y0 = d.y - h; d.rect(M, y0, CW, h, i % 2 ? [1, 1, 1] : [.97, .97, .98]); d.rect(M, y0, 4, h, tr ? COL.red : COL.line);
+    d.txt(M + 12, y0 + h - 12, `${t.name} ${t.date}`, 10, true, COL.ink); d.txt(M + 12, y0 + h - 23, tr ? t.muscles.join(' · ') : 'Descanso: come lo cocinado, camina y duerme bien', 8.5, false, COL.mut);
+    d.txtR(M + CW - 10, y0 + h - 18, tr ? t.train : 'Descanso', 10, true, tr ? COL.red : COL.mut);
+    ex.forEach((e, j) => { const m = String(e).match(/^(.*?)\s+(\d+\s*[x×]\s*[\d-]+)\s*$/), name = m ? m[1] : e, sr = m ? m[2].replace(/\s*x\s*/i, '×') : '', y = y0 + h - 40 - j * 12;
+      d.txt(M + 14, y, `${j + 1}. ${name}`, 9, false, COL.ink); if (sr) d.txtR(M + CW - 10, y, `${sr}`, 9, true, COL.red); });
+    d.y = y0; });
+  d.y -= 10; d.para('Cómo leerlo: cada ejercicio indica series×repeticiones. Termina cada serie con 1-2 repeticiones en reserva (RIR 1-2). Descansa 2-3 min en los compuestos (presses, remos, sentadillas) y 60-90 s en los aislamientos. En la app, toca la foto de cada ejercicio para ver la animación y la técnica.', { size: 8.8, color: COL.mut });
+  d.para('Recuperación: cada músculo descansa 48 h (72 h piernas y espalda) antes de volver a entrenarse. El deltoide posterior va con el día de empuje.', { size: 8.8, color: COL.mut });
 }
 export function buildWeekPdf(data = {}) {
   const d = new Doc(); weekCover(d, data);

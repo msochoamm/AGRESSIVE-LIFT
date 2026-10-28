@@ -4,6 +4,14 @@
 /* ---------- Alimentos (por 100 g, peso cocido salvo avena/whey) ---------- */
 // tier de costo en Colombia: 1 barato · 2 medio · 3 caro. raw = factor cocido→crudo para la lista de compras.
 
+/** Qué lleva EXACTAMENTE la «verdura mixta»: proporciones sobre el peso total (la app nunca dice solo «verduras mixtas»). */
+export const VEG_MIX = [['Zanahoria', 0.3], ['Brócoli', 0.3], ['Habichuela', 0.25], ['Tomate y cebolla', 0.15]];
+export const VEG_TXT = 'zanahoria, brócoli, habichuela y tomate';
+const vegId = n => 'veg-' + n.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/ /g, '-');
+export const vegSplit = g => VEG_MIX.map(([n, p]) => [n, g * p]);
+/** En una receta, la primera vez que aparece «verduras» se aclara cuáles son (una sola vez para no alargar el texto). */
+const vegSteps = steps => { let done = false; return steps.map(s => (!done && /\bverduras\b/.test(s) ? (done = true, s.replace(/\bverduras\b/, `verduras (${VEG_TXT})`)) : s)); };
+
 /** Plan de cocina: qué comprar/cocinar y cuándo (batch cooking), cómo porcionar y recalentar. */
 /** Tareas de cocina por lotes para los días [from..to] de un menú (sirve para cualquier tanda, no solo domingo/miércoles). */
 export function cookTasks(menu, from, to, label) {
@@ -13,12 +21,16 @@ export function cookTasks(menu, from, to, label) {
   const list = (tot, kind) => Object.entries(tot).filter(([id]) => FOODS[id].kind === kind).map(([id, g]) => `${FOODS[id].n.toLowerCase()} ${Math.round(g / 10) * 10} g`);
   const { tot, ids } = block(from, to), t = [], n = to - from + 1;
   const prot = list(tot, 'prot').filter(x => !/huevo|cocid/.test(x)), carb = [...list(tot, 'carb'), ...list(tot, 'prot')].filter(x => /cocid/.test(x));
-  const veg = list(tot, 'veg');
+  const veg = list(tot, 'veg').filter(x => !/^verduras/.test(x));
   if (prot.length) t.push(`🍗 Proteínas (peso crudo): ${prot.join(', ')}. Sazona con sal, ajo y pimienta, cocina hasta que estén bien cocidas y porciona en ${n} recipientes (uno por comida).`);
   if (carb.length) t.push(`🍚 Carbohidratos y legumbres (peso ya cocido): ${carb.join(', ')}. Cocínalos juntos y guárdalos en recipientes aparte de la proteína para que no se pongan blandos.`);
-  if (veg.length) t.push(`🥦 Verduras: ${veg.join(', ')}. Lávalas y córtalas; saltéalas 4-5 min el mismo día de comerlas o déjalas listas crudas.`);
+  if (tot.verduras) { const parts = vegSplit(tot.verduras).map(([n, g]) => `${n.toLowerCase()} ${Math.round(g / 10) * 10} g`);
+    t.push(`🥦 Verduras, ${Math.round(tot.verduras / 10) * 10} g en total = ${parts.join(' + ')}. Lávalas y córtalas: zanahoria en rodajas finas, habichuela en trozos de 3 cm, brócoli en ramitos pequeños, tomate en cubos y cebolla en tiras. Para comer: saltea 2 min la zanahoria y la habichuela con el aceite y sal, agrega el brócoli, el tomate y la cebolla y cocina 2-3 min más (o déjalas listas crudas en la nevera).`); }
+  if (veg.length) t.push(`🥦 Otras verduras: ${veg.join(', ')}. Lávalas y córtalas; saltéalas 4-5 min el mismo día de comerlas o déjalas listas crudas.`);
   if (tot.huevo) t.push(`🥚 Hierve ${Math.ceil(tot.huevo / 50 / 1.0)} huevos duros (10 min) para desayunos y snacks.`);
   if ([...ids].some(i => /d-oats/.test(i))) t.push('🥣 Avena de frasco: prepárala la noche anterior (avena + leche + whey + banano).');
+  for (let d = from; d <= to; d++) { const ms = (menu.days[d] || []).filter(m => m.prep !== 'fuera'); if (!ms.length) continue;
+    t.push(`🥡 Recipientes del día ${d - from + 1} — ${ms.map(m => `${m.slot}: ${m.items.map(it => it.text).join(' + ')}`).join(' | ')}.`); }
   t.push(`📦 Etiqueta cada recipiente con el día (${label}) y guarda lo de los 2 primeros días en la nevera; lo demás, en el congelador si dura más de 3-4 días.`);
   return t;
 }
@@ -60,7 +72,7 @@ export const FOODS = {
   pan: { n: 'Pan integral', s: 'pan integral', k: 247, p: 13, c: 41, f: 3.4, tier: 1, raw: 1, kind: 'carb' },
   arepa: { n: 'Arepa de maíz', s: 'arepa', k: 195, p: 4, c: 40, f: 1.5, tier: 1, raw: 1, kind: 'carb' },
   banano: { n: 'Banano', s: 'banano', k: 89, p: 1.1, c: 23, f: 0.3, tier: 1, raw: 1, kind: 'carb' },
-  verduras: { n: 'Verduras mixtas', s: 'verduras', k: 30, p: 2, c: 6, f: 0.2, tier: 1, raw: 1.1, kind: 'veg' },
+  verduras: { n: 'Verduras (zanahoria, brócoli, habichuela y tomate)', s: 'verduras', k: 30, p: 2, c: 6, f: 0.2, tier: 1, raw: 1.1, kind: 'veg' },
   zuquini: { n: 'Zuquini', s: 'zuquini', k: 17, p: 1.2, c: 3.1, f: 0.3, tier: 1, raw: 1.1, kind: 'veg' },
   aguacate: { n: 'Aguacate', s: 'aguacate', k: 160, p: 2, c: 9, f: 15, tier: 1, raw: 1, kind: 'fat', cap: 80 },
   mani: { n: 'Maní', s: 'maní', k: 567, p: 26, c: 16, f: 49, tier: 1, raw: 1, kind: 'fat', cap: 20 },
@@ -295,7 +307,7 @@ export function generateMenu(target, prefs = {}, seed = 0, opts = {}) {
       const T = { p: target.p * fr, c: target.c * fr, f: target.f * fr };
       const tpl2 = ex.length ? { ...tpl, fixed: tpl.fixed.filter(([id]) => !ex.includes(id)), fat: ex.includes(tpl.fat) ? null : tpl.fat } : tpl;
       const { items, tot } = solve(tpl2, pf, tpl2.c, T, pool);
-      return { slot, time: (TIMES[slots.length] || [])[si] || '', id: tpl.id, name: (n => n.charAt(0).toUpperCase() + n.slice(1))(tpl.name.replace('{P}', FOODS[pf].s)), prep: tpl.prep, mins: tpl.mins, steps: (RECIPES[tpl.id] || []).map(x => x.replace(/\{P\}/g, FOODS[pf].s)), items: items.map(it => ({ id: it.id, g: it.g, text: label(it) })), k: Math.round(tot.k), p: Math.round(tot.p), c: Math.round(tot.c), f: Math.round(tot.f) };
+      return { slot, time: (TIMES[slots.length] || [])[si] || '', id: tpl.id, name: (n => n.charAt(0).toUpperCase() + n.slice(1))(tpl.name.replace('{P}', FOODS[pf].s)), prep: tpl.prep, mins: tpl.mins, steps: vegSteps((RECIPES[tpl.id] || []).map(x => x.replace(/\{P\}/g, FOODS[pf].s))), items: items.map(it => ({ id: it.id, g: it.g, text: label(it) })), k: Math.round(tot.k), p: Math.round(tot.p), c: Math.round(tot.c), f: Math.round(tot.f) };
     }).filter(Boolean);
     days.push(dayMeals);
   }
@@ -315,8 +327,9 @@ function prepPlan(days) {
 export function groceries(menu) {
   const tot = {};
   menu.days.forEach(ms => ms.forEach(m => m.items.forEach(it => { tot[it.id] = (tot[it.id] || 0) + it.g * (FOODS[it.id].raw || 1); })));
+  const veg = tot.verduras; if (veg) { delete tot.verduras; vegSplit(veg).forEach(([n, g]) => { tot[vegId(n)] = g; }); } // zanahoria, brócoli… por separado: se compra cada una
   return Object.entries(tot).map(([id, g]) => {
-    const f = FOODS[id], rounded = Math.ceil(g / 50) * 50;
+    const vn = id.startsWith('veg-') ? VEG_MIX.find(([n]) => vegId(n) === id)[0] : null, f = vn ? { ...FOODS.verduras, n: vn } : FOODS[id], rounded = Math.ceil(g / 50) * 50;
     return { id, need: f.unit ? Math.ceil(g / f.unit) : rounded, group: f.kind, n: f.unit ? `${f.n}` : f.n, amount: f.unit ? `${Math.ceil(g / f.unit)} huevos` : rounded >= 1000 ? `${(rounded / 1000).toFixed(rounded % 1000 ? 2 : 0).replace(/0$/, '')} kg` : `${rounded} g`, tier: f.tier };
   }).sort((a, b) => ['prot', 'supp', 'dairy', 'carb', 'veg', 'fat'].indexOf(a.group) - ['prot', 'supp', 'dairy', 'carb', 'veg', 'fat'].indexOf(b.group));
 }
