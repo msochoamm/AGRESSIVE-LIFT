@@ -285,3 +285,4 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
 .extag{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--hair);color:#d4d4d8;background:rgba(255,255,255,.04)}
 .excues.sm{margin-top:10px}.excues.sm li{font-size:13.5px}
 @media (prefers-reduced-motion:reduce){.exmedia .fb{animation:none;opacity:0}.exmedia.ready{animation:none}.btn,.chip{transition:none}}
+.yt-btn{display:inline-flex;align-items:center;gap:6px;text-decoration:none;font-size:14px;font-weight:700;color:#fff;border-color:var(--red)}

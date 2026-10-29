@@ -214,7 +214,7 @@ const TPL = [
   { id: 'a-lentejas-veg', slot: 'almuerzo', name: 'Lentejas con arroz y verduras', prep: 'nevera', mins: 4, p: { food: 'lenteja' }, c: 'arroz', fixed: [['verduras', 150]], fat: 'aceite', tags: [], needs: 'veg' },
   { id: 'c-bowl', slot: 'cena', name: 'Bowl de {P}, arroz y vegetales salteados', prep: 'nevera', mins: 4, p: { pool: true }, c: 'arroz', fixed: [['verduras', 150]], fat: 'aceite', tags: [] },
   { id: 'c-papa', slot: 'cena', name: '{P} con papa al horno y ensalada', prep: 'nevera', mins: 4, p: { pool: true }, c: 'papa', fixed: [['verduras', 150]], fat: 'aceite', tags: [] },
-  { id: 'c-salteado', slot: 'cena', name: 'Salteado rápido de {P} con verduras y arroz', prep: 'rapido', mins: 15, p: { pool: true }, c: 'arroz', fixed: [['verduras', 200]], fat: 'aceite', tags: [] },
+  { id: 'c-salteado', slot: 'cena', name: 'Salteado rápido de {P} con verduras y arroz', prep: 'rapido', mins: 15, p: { pool: true, not: ['atun'] }, c: 'arroz', fixed: [['verduras', 200]], fat: 'aceite', tags: [] },
   { id: 'c-tortilla', slot: 'cena', name: 'Tortilla de huevos con verduras y papa', prep: 'rapido', mins: 12, p: { food: 'huevo' }, c: 'papa', fixed: [['verduras', 150]], fat: 'aceite', tags: ['egg'] },
   { id: 'c-atun', slot: 'cena', name: 'Atún con arroz y ensalada', prep: 'rapido', mins: 5, p: { food: 'atun' }, c: 'arroz', fixed: [['verduras', 120]], fat: 'aceite', tags: [], needs: 'atun' },
   { id: 'c-zuquini', slot: 'cena', name: 'Zuquini salteado con {P}', prep: 'rapido', mins: 15, p: { pool: true, only: ['corazon', 'higado', 'molida'] }, c: 'arroz', fixed: [['zuquini', 250]], fat: 'aceite', tags: [] },
@@ -232,7 +232,7 @@ const TPL = [
   { id: 'd-camote', slot: 'desayuno', name: 'Batata con huevos y aguacate', prep: 'cocinar', mins: 12, p: { food: 'huevo' }, c: 'camote', fixed: [['aguacate', 40]], tags: ['egg'] },
   { id: 'd-avena-cocida', slot: 'desayuno', name: 'Avena cocida con whey, banano y maní', prep: 'cocinar', mins: 6, p: { food: 'whey' }, c: 'avena', fixed: [['leche', 200], ['banano', 100]], fat: 'mani', tags: ['whey', 'dairy'] },
   { id: 'a-albondigas', slot: 'almuerzo', name: 'Albóndigas de {P} con arroz y ensalada', prep: 'nevera', mins: 5, p: { pool: true, only: ['molida', 'res', 'pechuga', 'muslo'] }, c: 'arroz', fixed: [['verduras', 150]], fat: 'aceite', tags: [] },
-  { id: 'a-guisado', slot: 'almuerzo', name: '{P} guisado con papa y verduras', prep: 'nevera', mins: 5, p: { pool: true }, c: 'papa', fixed: [['verduras', 120]], fat: 'aceite', tags: [] },
+  { id: 'a-guisado', slot: 'almuerzo', name: '{P} guisado con papa y verduras', prep: 'nevera', mins: 5, p: { pool: true, not: ['atun'] }, c: 'papa', fixed: [['verduras', 120]], fat: 'aceite', tags: [] },
   { id: 'a-bolonesa', slot: 'almuerzo', name: 'Pasta a la boloñesa con {P}', prep: 'cocinar', mins: 20, p: { pool: true, only: ['molida', 'res', 'cerdo'] }, c: 'pasta', fixed: [['verduras', 100]], fat: 'aceite', tags: ['gluten'] },
   { id: 'a-yuca', slot: 'almuerzo', name: '{P} con yuca y ensalada', prep: 'cocinar', mins: 25, p: { pool: true }, c: 'yuca', fixed: [['verduras', 150]], fat: 'aceite', tags: [] },
   { id: 'a-camote', slot: 'almuerzo', name: '{P} con batata asada y ensalada', prep: 'cocinar', mins: 30, p: { pool: true }, c: 'camote', fixed: [['verduras', 150]], fat: 'aceite', tags: [] },
@@ -240,9 +240,9 @@ const TPL = [
   { id: 'a-frijoles', slot: 'almuerzo', name: 'Fríjoles con arroz, {P} y aguacate', prep: 'nevera', mins: 5, p: { pool: true }, c: 'arroz', fixed: [['frijol', 150], ['verduras', 80], ['aguacate', 40]], tags: [], needs: 'legumbres' },
   { id: 'a-pescado', slot: 'almuerzo', name: 'Pescado al horno con papa y verduras', prep: 'cocinar', mins: 25, p: { pool: true, only: ['pescado'] }, c: 'papa', fixed: [['verduras', 150]], fat: 'aceite', tags: [] },
   { id: 'a-burger', slot: 'almuerzo', name: 'Hamburguesa casera fit de {P} con pan integral y papa', prep: 'cocinar', mins: 20, p: { pool: true, only: ['molida', 'res', 'pechuga'] }, c: 'pan', fixed: [['papa', 150], ['verduras', 80]], fat: 'aceite', tags: ['gluten'] },
-  { id: 'a-wok', slot: 'almuerzo', name: 'Salteado tipo wok de {P} con arroz y verduras', prep: 'rapido', mins: 15, p: { pool: true }, c: 'arroz', fixed: [['verduras', 200]], fat: 'aceite', tags: [] },
+  { id: 'a-wok', slot: 'almuerzo', name: 'Salteado tipo wok de {P} con arroz y verduras', prep: 'rapido', mins: 15, p: { pool: true, not: ['atun'] }, c: 'arroz', fixed: [['verduras', 200]], fat: 'aceite', tags: [] },
   { id: 'c-pasta', slot: 'cena', name: 'Pasta con {P} y verduras salteadas', prep: 'rapido', mins: 18, p: { pool: true }, c: 'pasta', fixed: [['verduras', 150]], fat: 'aceite', tags: ['gluten'] },
-  { id: 'c-sopa', slot: 'cena', name: 'Sopa de {P} con papa y verduras', prep: 'nevera', mins: 5, p: { pool: true }, c: 'papa', fixed: [['verduras', 200]], fat: 'aceite', tags: [] },
+  { id: 'c-sopa', slot: 'cena', name: 'Sopa de {P} con papa y verduras', prep: 'nevera', mins: 5, p: { pool: true, not: ['atun'] }, c: 'papa', fixed: [['verduras', 200]], fat: 'aceite', tags: [] },
   { id: 'c-camote', slot: 'cena', name: '{P} con batata y ensalada', prep: 'nevera', mins: 5, p: { pool: true }, c: 'camote', fixed: [['verduras', 150]], fat: 'aceite', tags: [] },
   { id: 'c-arepa', slot: 'cena', name: 'Arepa rellena de {P} con aguacate', prep: 'rapido', mins: 10, p: { pool: true, only: ['muslo', 'pechuga', 'res', 'cerdo', 'molida'] }, c: 'arepa', fixed: [['aguacate', 50], ['verduras', 60]], tags: [] },
   { id: 'c-pescado', slot: 'cena', name: 'Pescado a la plancha con papa y ensalada', prep: 'rapido', mins: 15, p: { pool: true, only: ['pescado'] }, c: 'papa', fixed: [['verduras', 150]], fat: 'aceite', tags: [] },
@@ -254,7 +254,23 @@ const TPL = [
 ];
 
 /* Recetas de preparación por plantilla. {P} = proteína del día. Las cantidades son las que muestra cada comida. */
-const COOK_P = 'Sazona {P} con sal, ajo en polvo y pimienta. Cocínalo en sartén o airfryer hasta que no quede rosado por dentro (pollo/cerdo/molida: bien cocido, ~75 °C; res y pescado al punto que prefieras, pescado hasta que se desmenuce).';
+const COOK_P = '{COOK}';
+/** Cómo cocinar CADA proteína (tiempos y punto exactos). Reemplaza al token {COOK} según la proteína del día. */
+const COOK = {
+  muslo: 'Sazona el muslo de pollo con sal, ajo en polvo y pimienta. Sartén a fuego medio, tapado, 6-7 min por lado (airfryer: 180 °C, 15 min) hasta que no quede rosado por dentro.',
+  pechuga: 'Aplana la pechuga con la palma para que quede pareja y sazónala con sal, ajo y pimienta. Sartén a fuego medio 5-6 min por lado (airfryer: 180 °C, 12 min) hasta que no quede rosada.',
+  molida: 'Sofríe la carne molida con sal, ajo y cebolla 8-10 min, desmenuzándola con la cuchara, hasta que no quede rosada.',
+  res: 'Sazona la res con sal y pimienta. Sartén bien caliente 3-4 min por lado (punto medio) y déjala reposar 3 min antes de cortarla.',
+  cerdo: 'Sazona el lomo de cerdo con sal, ajo y pimienta. Sartén a fuego medio 5-6 min por lado hasta que no quede rosado.',
+  pescado: 'Sazona el pescado con sal, ajo y limón. Plancha o sartén 3-4 min por lado hasta que se desmenuce con el tenedor.',
+  atun: 'Abre la lata de atún, escúrrelo y mézclalo con limón, sal, pimienta y un poco de cebolla picada. No se cocina.',
+  huevo: 'Revuelve los huevos en sartén antiadherente con una gota de aceite, 2-3 min a fuego medio.',
+  higado: 'Sofríe cebolla 3 min, agrega el hígado en tiras y cocina 2-3 min por lado; no lo pases de tiempo porque se endurece.',
+  corazon: 'Corta el corazón en tiras finas, sazona y saltea a fuego alto 5-6 min hasta que no quede rosado.',
+  lenteja: 'Calienta las lentejas con un chorrito de agua, sal y cebolla 5 min.',
+  frijol: 'Calienta los fríjoles con un chorrito de agua, sal y cebolla 5 min.',
+};
+const cookFor = pf => COOK[pf] || COOK.muslo;
 const RECIPES = {
   'd-oats': ['En un frasco mezcla la avena con la leche y la whey hasta que no queden grumos.', 'Añade el banano en rodajas y el maní por encima.', 'Tapa y deja en la nevera mínimo 4 horas (ideal de un día para otro). Se come frío o tibio.'],
   'd-yogur': ['Pon el yogur griego en un bowl.', 'Agrega la avena y el banano en rodajas.', 'Termina con el maní picado. Listo en 3 min, sin cocinar.'],
@@ -310,11 +326,50 @@ const RECIPES = {
   's-yogur-avena': ['Mezcla el yogur con la avena.', 'Agrega el banano en rodajas y el maní picado.'],
   's-pan-atun': ['Escurre el atún y mézclalo con limón, sal y pimienta.', 'Tuesta el pan y arma el sándwich.'],
 };
+/** Comidas genéricas de respaldo: ahora con nombre y pasos concretos (tiempos, punto, orden) en vez de texto vago. */
+const GEN = {
+  'huevo|avena': ['Tortitas de avena y huevo', ['Bate los huevos en un bowl con la avena, una pizca de sal y canela (opcional) hasta tener una mezcla espesa. Déjala reposar 2 min.', 'Calienta una sartén antiadherente a fuego medio con una gota de aceite.', 'Vierte la mezcla en 2-3 tortitas y cocina 2-3 min por lado, hasta que doren y se despeguen solas.', 'Sírvelas con la fruta o el maní. Listo en 8 min.']],
+  'huevo|arepa': ['Huevos revueltos con arepa', ['Calienta la arepa en sartén o tostadora 3 min por lado hasta que dore.', COOK.huevo, 'Abre la arepa y rellénala con los huevos, o sírvelos al lado.']],
+  'huevo|pan': ['Tostadas con huevo', ['Tuesta el pan 2 min.', COOK.huevo, 'Sirve los huevos sobre las tostadas.']],
+  'huevo|banano': ['Huevos duros con banano', ['Cuece los huevos 10 min en agua hirviendo, enfríalos y pélalos (puedes dejar varios listos para 4 días).', 'Come los huevos con el banano. Sin cocinar nada más.']],
+  'huevo|arroz': ['Arroz con huevo', ['Calienta el arroz ya cocido en sartén con un chorrito de agua, 2 min.', COOK.huevo, 'Sirve el huevo sobre el arroz con sal y pimienta.']],
+  'huevo|papa': ['Papa salteada con huevo', ['Corta la papa cocida en cubos y dórala en sartén con una gota de aceite 5 min.', 'Agrega los huevos batidos y revuelve 2 min hasta que cuajen.']],
+  'huevo|platano': ['Huevos con plátano maduro', ['Corta el plátano en rodajas y dóralo en sartén antiadherente 3 min por lado.', COOK.huevo, 'Sirve los huevos con el plátano al lado.']],
+  'huevo|pasta': ['Pasta con huevo y ajo', ['Calienta la pasta ya cocida en sartén con una gota de aceite y ajo 2 min.', 'Agrega los huevos batidos y revuelve 2 min a fuego bajo hasta que cuajen.']],
+  'huevo|camote': ['Batata con huevos', ['Calienta la batata cocida en microondas 2 min (o dórala en sartén 5 min).', COOK.huevo, 'Sirve los huevos sobre la batata.']],
+  'huevo|yuca': ['Yuca con huevos', ['Calienta la yuca cocida en sartén con una gota de aceite hasta que dore, 5 min.', COOK.huevo, 'Sirve junto.']],
+  'yogur|avena': ['Yogur griego con avena', ['Pon el yogur en un bowl y mezcla la avena.', 'Déjalo 2 min (la avena se ablanda) y agrega la fruta o el maní. Sin cocinar.']],
+  'yogur|banano': ['Yogur griego con banano', ['Pon el yogur en un bowl y agrega el banano en rodajas.', 'Termina con el maní picado. Listo en 1 min.']],
+  'whey|avena': ['Avena cocida con whey', ['Pon la avena con agua o leche en un bowl: 2 min en microondas, moviendo a la mitad (o 4 min en olla a fuego bajo).', 'Espera 1 min a que baje la temperatura y mezcla la whey; si la pones hirviendo se corta.', 'Agrega la fruta o el maní.']],
+  'whey|banano': ['Batido de whey con banano', ['Licúa la whey con el banano y agua o leche fría 20 segundos.', 'Tómalo al momento. Listo en 2 min.']],
+  'atun|arepa': ['Arepa con atún', ['Calienta la arepa 3 min por lado hasta que dore y ábrela.', COOK.atun, 'Rellena la arepa con el atún.']],
+  'atun|pan': ['Pan integral con atún', [COOK.atun, 'Tuesta el pan 2 min y arma el sándwich.']],
+  'atun|arroz': ['Arroz con atún', ['Calienta el arroz ya cocido 2 min.', COOK.atun, 'Sirve el atún sobre el arroz.']],
+  'atun|papa': ['Papa con atún', ['Calienta la papa cocida 2 min (microondas) y pártela en trozos.', COOK.atun, 'Mezcla o sirve junto.']],
+  'atun|pasta': ['Pasta con atún', ['Calienta la pasta ya cocida en sartén con una gota de aceite y ajo 2 min.', COOK.atun, 'Mezcla todo fuera del fuego.']],
+  'atun|platano': ['Atún con plátano maduro', ['Corta el plátano en rodajas y dóralo 3 min por lado en sartén antiadherente.', COOK.atun, 'Sirve junto.']],
+  'atun|camote': ['Atún con batata', ['Calienta la batata cocida 2 min.', COOK.atun, 'Sirve el atún sobre la batata.']],
+  'atun|yuca': ['Atún con yuca', ['Calienta la yuca cocida 3 min.', COOK.atun, 'Sirve junto.']],
+};
+/** Cómo dejar lista cada fuente de carbohidrato (solo para comidas con proteína del pool). */
+const CARB_HOW = {
+  arroz: 'Calienta el arroz ya cocido 2 min en microondas (o en sartén con un chorrito de agua).',
+  papa: 'Calienta la papa ya cocida 2 min, o córtala en cubos y dórala en sartén 5 min con una gota de aceite.',
+  platano: 'Corta el plátano maduro en rodajas y dóralo en sartén antiadherente 3 min por lado.',
+  pasta: 'Calienta la pasta ya cocida 1 min con un chorrito de agua (si va a cocinarla: 8-10 min en agua con sal).',
+  arepa: 'Calienta la arepa en sartén o tostadora 3 min por lado hasta que dore.',
+  avena: 'Cocina la avena con agua: 2 min en microondas, moviendo a la mitad.',
+  pan: 'Tuesta el pan 2 min.',
+  banano: 'Pela el banano y córtalo en rodajas.',
+  camote: 'Calienta la batata cocida 2 min (o hornéala en cubos a 200 °C 25 min).',
+  yuca: 'Calienta la yuca ya cocida 3 min (o dórala en sartén 5 min).',
+};
+const genName = (pf, c) => (pf && GEN[pf + '|' + c]) ? GEN[pf + '|' + c][0] : null;
 /** Receta de las comidas genéricas de respaldo (sin plantilla propia). */
 const genericSteps = (tpl, pf) => {
-  const c = FOODS[tpl.c].s, veg = tpl.fixed.some(([id]) => id === 'verduras');
-  const prot = pf === 'huevo' ? ['Cocina los huevos (duros o revueltos en poco aceite).'] : pf === 'yogur' ? ['Pon el yogur griego en un bowl.'] : pf === 'whey' ? ['Licúa o mezcla la whey con agua o leche.'] : pf === 'atun' ? ['Escurre el atún y mézclalo con limón y sal.'] : [COOK_P];
-  return [...prot, `Prepara ${c} (cocido, tostado o fresco según el alimento) y pésalo con las cantidades de la comida.`, veg ? 'Saltea o sirve las verduras con el aceite, sal y limón.' : 'Suma la fruta o el maní si la comida lo trae.', 'Arma el plato y listo.'];
+  const c = tpl.c, veg = tpl.fixed.some(([id]) => id === 'verduras'), g = GEN[pf + '|' + c];
+  if (g) return g[1];
+  return [CARB_HOW[c] || `Deja lista la ${FOODS[c].s}.`, COOK_P, veg ? 'Saltea las verduras 4 min con el aceite, sal y ajo.' : (tpl.fat === 'mani' ? 'Pica el maní y espolvoréalo por encima.' : 'Sírvelo con limón y sal.'), 'Arma el plato: ' + FOODS[c].s + ', ' + (veg ? 'verduras y ' : '') + '{P} encima.'];
 };
 const TIMES = { 3: ['8:00', '13:00', '19:30'], 4: ['8:00', '13:00', '16:30', '19:30'], 5: ['7:30', '10:30', '13:00', '16:30', '19:30'], 6: ['7:00', '9:30', '12:30', '15:30', '18:30', '21:00'] };
 const SLOTS = { 3: [['desayuno', .27], ['almuerzo', .38], ['cena', .35]], 4: [['desayuno', .25], ['almuerzo', .33], ['snack', .12], ['cena', .30]], 5: [['desayuno', .22], ['snack', .12], ['almuerzo', .30], ['snack', .10], ['cena', .26]], 6: [['desayuno', .20], ['snack', .10], ['almuerzo', .25], ['snack', .12], ['cena', .23], ['snack', .10]] };
@@ -431,16 +486,17 @@ export function generateMenu(target, prefs = {}, seed = 0, opts = {}) {
   };
   // Respaldo: si las exclusiones dejan una comida sin plantillas, se arma una con los carbohidratos/proteínas que SÍ acepta (nunca se descarta una comida).
   const carbOK = Object.keys(FOODS).filter(id => FOODS[id].kind === 'carb' && !ex.includes(id) && !(noGluten && ['pan', 'pasta'].includes(id)));
-  const CPREF = { desayuno: ['avena', 'arepa', 'pan', 'banano', 'arroz', 'papa', 'platano', 'pasta'], snack: ['banano', 'arepa', 'pan', 'avena', 'platano', 'papa', 'arroz', 'pasta'], almuerzo: ['arroz', 'papa', 'platano', 'pasta', 'arepa', 'avena', 'pan', 'banano'] };
+  const CPREF = { desayuno: ['avena', 'arepa', 'pan', 'banano', 'arroz', 'papa', 'platano', 'pasta'], snack: ['banano', 'arepa', 'pan', 'avena', 'platano', 'papa', 'arroz', 'pasta'], almuerzo: ['arroz', 'papa', 'platano', 'pasta', 'arepa', 'yuca', 'camote'] };
   CPREF.cena = CPREF.almuerzo;
   const fatOK = ['aceite', 'mani', 'aguacate'].filter(id => !ex.includes(id));
   const lightP = ['huevo', 'yogur', 'whey', 'atun'].filter(id => !ex.includes(id) && !(id === 'huevo' && !eggOK) && !((id === 'yogur' || id === 'whey') && noDairy) && !(id === 'whey' && !whey) && !(id === 'atun' && !atunOK) && !(veg && id === 'atun'));
   const generic = slot => {
     const cs = (CPREF[slot] || CPREF.almuerzo).filter(id => carbOK.includes(id)); if (!cs.length) cs.push(carbOK[0] || 'arroz');
     const light = slot === 'desayuno' || slot === 'snack', out = [];
+    const COMPAT = { huevo: null, atun: ['arepa', 'pan', 'arroz', 'papa', 'pasta', 'platano', 'camote', 'yuca'], yogur: ['avena', 'banano'], whey: ['avena', 'banano'] };
     cs.slice(0, 3).forEach((c, i) => {
-      const pf = light && lightP.length ? lightP[i % lightP.length] : null, tp = FOODS[c].s;
-      out.push({ id: `g-${slot}-${c}${pf ? '-' + pf : ''}`, slot, generic: true, name: pf ? `${FOODS[pf].s.charAt(0).toUpperCase() + FOODS[pf].s.slice(1)} con ${tp}` : `{P} con ${tp}${light ? '' : ' y verduras'}`, prep: 'nevera', mins: 5,
+      const okP = light ? lightP.filter(p => !COMPAT[p] || COMPAT[p].includes(c)) : [], pf = okP.length ? okP[i % okP.length] : null, tp = FOODS[c].s;
+      out.push({ id: `g-${slot}-${c}${pf ? '-' + pf : ''}`, slot, generic: true, name: pf ? (genName(pf, c) || `${FOODS[pf].s.charAt(0).toUpperCase() + FOODS[pf].s.slice(1)} con ${tp}`) : `{P} con ${tp}${light ? '' : ' y verduras'}`, prep: 'nevera', mins: pf === 'huevo' && c === 'avena' ? 8 : 5,
         p: pf ? { food: pf } : { pool: true, not: ['huevo', 'higado', 'lenteja', 'frijol'] }, c, fixed: light ? [] : [['verduras', 150]], fat: fatOK[0] || null, tags: [] });
     });
     return out;
@@ -470,7 +526,7 @@ export function generateMenu(target, prefs = {}, seed = 0, opts = {}) {
       const tpl2 = ex.length ? { ...tpl, fixed: tpl.fixed.filter(([id]) => !ex.includes(id)), fat: ex.includes(tpl.fat) ? null : tpl.fat } : tpl;
       const { items, tot } = solve(tpl2, pf, tpl2.c, T, pool);
       const fl = ST.flavors !== false && tpl.prep !== 'fuera' && (tpl.p.pool || MEAT.includes(pf)) ? FLAVORS.filter(([, dairy]) => !(dairy && noDairy))[(d + si + seed) % FLAVORS.filter(([, dairy]) => !(dairy && noDairy)).length] : null;
-      return { flavor: fl ? fl[0] : '', slot, time: (TIMES[slots.length] || [])[si] || '', id: tpl.id, name: (n => n.charAt(0).toUpperCase() + n.slice(1))(tpl.name.replace('{P}', FOODS[pf].s)), prep: tpl.prep, mins: tpl.mins, steps: vegSteps((RECIPES[tpl.id] || genericSteps(tpl, pf)).map(x => x.replace(/\{P\}/g, FOODS[pf].s)).concat(fl ? [`Toque del día (gratis, ~10 kcal): ${fl[0]}.`] : [])), items: items.map(it => ({ id: it.id, g: it.g, text: label(it) })), k: Math.round(tot.k), p: Math.round(tot.p), c: Math.round(tot.c), f: Math.round(tot.f) };
+      return { flavor: fl ? fl[0] : '', slot, time: (TIMES[slots.length] || [])[si] || '', id: tpl.id, name: (n => n.charAt(0).toUpperCase() + n.slice(1))(tpl.name.replace('{P}', FOODS[pf].s).replace(pf === 'atun' ? / desmechado/ : /^$/, '')), prep: tpl.prep, mins: tpl.mins, steps: vegSteps((RECIPES[tpl.id] || genericSteps(tpl, pf)).filter(x => !(pf === 'atun' && /^Desmen/.test(x))).map(x => (pf === 'atun' ? x.replace(/ desmechado/g, '') : x)).map(x => x.replace(/\{COOK\}/g, cookFor(pf)).replace(/\{P\}/g, FOODS[pf].s)).concat(fl ? [`Toque del día (gratis, ~10 kcal): ${fl[0]}.`] : [])), items: items.map(it => ({ id: it.id, g: it.g, text: label(it) })), k: Math.round(tot.k), p: Math.round(tot.p), c: Math.round(tot.c), f: Math.round(tot.f) };
     }).filter(Boolean);
     days.push(fitDay(dayMeals, T0.kcal));
   }

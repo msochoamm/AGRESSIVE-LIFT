@@ -8,6 +8,9 @@ import * as X from './exdb.js';
 /* ---------- Utilidades y persistencia local ---------- */
 const $ = s => document.querySelector(s);
 const VERSION = 'v32';
+/** Búsqueda en YouTube de cómo preparar una comida (abre la app de YouTube en el celular si está instalada). */
+const ytUrl = name => 'https://www.youtube.com/results?search_query=' + encodeURIComponent('cómo preparar ' + String(name).replace(/\s+/g, ' ').trim() + ' receta fácil y rápida');
+const ytBtn = name => `<a class="chip !px-3 yt-btn" href="${ytUrl(name)}" target="_blank" rel="noopener noreferrer">▶️ Ver video</a>`;
 const esc = t => String(t).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 await hydrate(); // IndexedDB → caché en memoria
 const localIso = t => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
@@ -839,6 +842,7 @@ const planCards = () => {
     ${meals.map((m, i) => `<div class="meal"><div class="flex justify-between items-start gap-2"><div class="min-w-0"><div class="text-xs neon uppercase">${m.slot}${m.time ? ` · 🕗 ${fmtHour(m.time)}` : ''}</div><div class="font-bold leading-tight">${esc(m.name)}</div>${m.flavor ? `<div class="text-xs text-zinc-500">✨ Toque: ${esc(m.flavor)}</div>` : ''}</div><span class="mealtag">${(PREP[m.prep] || PREP.cocinar)(m.mins)}</span></div>
       <div class="text-sm text-zinc-400 mt-1">${m.items.map(it => esc(it.text)).join(' · ')}</div>
       ${(m.steps || []).length ? `<details class="mt-1"><summary class="text-sm neon" style="min-height:36px;display:flex;align-items:center">📖 Ver preparación</summary><ol class="strat" style="list-style:decimal;padding-left:18px">${m.steps.map(x => `<li>${esc(x)}</li>`).join('')}</ol></details>` : ''}
+      <div class="mt-1">${ytBtn(m.name)}</div>
       <div class="flex justify-between items-center mt-1"><span class="text-xs text-zinc-500">${m.k} kcal · P ${m.p} · C ${m.c} · G ${m.f}</span><button class="chip !px-3" data-act="mealadd" data-d="${day}" data-i="${i}">＋ Registrar</button></div></div>`).join('') || '<div class="text-sm text-zinc-500">No pude armar el menú con esas restricciones: amplía las proteínas o el tiempo.</div>'}
     <div class="text-xs text-zinc-400 mt-2">Día: <b class="text-white">${tot.k}</b> kcal · P ${tot.p} · C ${tot.c} · G ${tot.f} <span class="text-zinc-500">(meta ${t.kcal} · P ${t.p} · C ${t.c} · G ${t.f})</span></div>
     ${menu.notes.map(n => `<div class="text-xs text-zinc-500 mt-1">ℹ️ ${esc(n)}</div>`).join('')}
