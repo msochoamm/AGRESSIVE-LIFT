@@ -13,7 +13,7 @@ await hydrate(); // IndexedDB → caché en memoria
 const localIso = t => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const today = () => localIso(Date.now());
 const DEFAULT_TRAINING_SCHEDULE = { days: 3, split: 'PPL', cycle: false, workDays: 3, restDays: 4, startDate: today(), weekdays: [1, 3, 5] };
-const TRAINER_RULES = ' REGLAS DE PROGRAMACIÓN (obligatorias, basadas en consenso científico y en cómo entrenan CBum y Jesse James West): 1) Nunca programes el mismo músculo con menos de 48 h entre sesiones (72 h en piernas y espalda). 2) El deltoide posterior (pájaros, pec deck inverso, face pull) va con el día de EMPUJE junto a pecho y tríceps, nunca en el día de jalón; los hombros no se repiten en días seguidos. 3) No repitas el mismo ejercicio en días consecutivos; en Torso/Pierna o cuerpo completo usa variantes A/B. 4) El press de pecho ya carga el deltoide anterior: no pongas hombros el día después de pecho salvo dentro de la misma sesión de empuje. 5) Apunta a 10-20 series semanales por músculo y a entrenar cada músculo 2 veces por semana cuando el esquema lo permita; el ciclo 3 días + 1 descanso (CBum) entrena cada músculo una vez por ciclo; la mejor división es la que la persona cumple. 6) Si te piden revisar o corregir la rutina (aunque esté bloqueada) usa los datos de auditoria y el calendario y responde con command adjust_routine y payload {"actions":[{"type":"replace_exercise","muscle":"pecho","slot":0,"name":"nombre exacto del catálogo"},{"type":"remove_muscle","date":"AAAA-MM-DD","muscle":"hombros"},{"type":"fix_recovery"}]}. Nunca cambies días ni la división de una rutina bloqueada.';
+const TRAINER_RULES = ' REGLAS DE PROGRAMACIÓN (obligatorias, basadas en consenso científico y en cómo entrenan CBum y Jesse James West): 1) Nunca programes el mismo músculo con menos de 48 h entre sesiones (72 h en piernas y espalda). 2) El deltoide posterior (pájaros, pec deck inverso, face pull) va con el día de EMPUJE junto a pecho y tríceps, nunca en el día de jalón; los hombros no se repiten en días seguidos. 3) No repitas el mismo ejercicio en días consecutivos; en Torso/Pierna o cuerpo completo usa variantes A/B. 4) El press de pecho ya carga el deltoide anterior: no pongas hombros el día después de pecho salvo dentro de la misma sesión de empuje. 5) Apunta a 10-20 series semanales por músculo y a entrenar cada músculo 2 veces por semana cuando el esquema lo permita; el ciclo 3 días + 1 descanso (CBum) entrena cada músculo una vez por ciclo; la mejor división es la que la persona cumple. 6) Si te piden revisar o corregir la rutina (aunque esté bloqueada) usa los datos de auditoria y el calendario y responde con command adjust_routine y payload {"actions":[{"type":"replace_exercise","muscle":"pecho","slot":0,"name":"nombre exacto del catálogo"},{"type":"remove_muscle","date":"AAAA-MM-DD","muscle":"hombros"},{"type":"fix_recovery"}]}. Nunca cambies días ni la división de una rutina bloqueada. 7) PREFERENCIAS MECÁNICAS: el contexto trae preferences.mech {prio (polea|mancuerna|barra|maquina|smith), angles, avoid, notes}. Úsalas al 100% al elegir cada ejercicio: prioriza ese equipo y esos ángulos y NUNCA programes lo que figure en avoid. 8) Jamás repitas el mismo ejercicio dentro de una sesión (el finalizador/drop set se indica en el mismo ejercicio, no como otro bloque).';
 const TRAINER_SYSTEM_PROMPT = 'Eres el entrenador real de AGRESSIVE LIFT: hablas como una persona, cercano y directo, en español y sin listas numeradas. Obedece el mensaje actual: nunca sustituyas una frecuencia o división explícita por una genérica de 3 días. Haz la entrevista de forma conversacional (UNA pregunta por turno, sin repetir lo que ya respondió: revisa preferences, lastWorkout y el historial) y, cuando tengas lo imprescindible, genera el plan en ese mismo turno con command update_routine. Si planLock está activo el plan es INAMOVIBLE hasta planLock.until: no uses update_routine y ofrece solo ajustes de carga, técnica o recuperación. No repitas literalmente tu respuesta anterior.' + TRAINER_RULES;
 const nutritionHistory = store.get('nutritionChatHistory', []);
 const previousNutritionChat = store.get('nutritionChat', []);
@@ -147,7 +147,9 @@ const weekDone = k => [...ALL, ...Object.values(CEX)].filter(e => MAP[e.m] === k
 // Catálogo: SIEMPRE 2 ejercicios por músculo (principal + complementario).
 // Catálogo: la selección por músculo sale de la base de ejercicios (exdb.js) según equipo, lugar y ajustes de comodidad.
 const avoidList = () => { const inj = String(S.trainingPreferences?.injuries || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ''); return Object.entries(X.AVOID).filter(([k]) => inj.includes(k)).flatMap(([, v]) => v); };
-const exOpts = () => ({ equip: S.trainingPreferences?.equip || [], place: S.trainingPreferences?.place === 'casa' ? 'casa' : 'gimnasio', avoid: avoidList() });
+const mechPrefs = () => S.trainingPreferences?.mech || {};
+X.setMech?.(store.get('trainingPreferences', {})?.mech || {});
+const exOpts = () => { const m = mechPrefs(); X.setMech(m); return { equip: S.trainingPreferences?.equip || [], place: S.trainingPreferences?.place === 'casa' ? 'casa' : 'gimnasio', avoid: [...avoidList(), ...X.avoidFromText(m.avoid || '')] }; };
 const pickFor = (k, n = 2, variant = 0) => X.pickExercises(k, n, { ...exOpts(), picks: S.exPicks || {}, variant });
 const CATALOG = {}; Object.keys(X.DEFAULT_PICKS).forEach(k => Object.defineProperty(CATALOG, k, { get: () => pickFor(k), enumerable: true }));
 const PRESETS = { Push: ['pecho', 'hombros', 'triceps'], Pull: ['espalda', 'biceps'], Piernas: ['cuads', 'isquios', 'gluteos', 'gemelos'] };
@@ -161,6 +163,10 @@ const ORDER = ['cuads', 'isquios', 'gluteos', 'espalda', 'pecho', 'hombros', 'tr
 const strategicOrder = ks => { const by = a => [...a].sort((x, y) => ORDER.indexOf(x) - ORDER.indexOf(y)); return [...by(ks.filter(k => S.focus.includes(k))), ...by(ks.filter(k => !S.focus.includes(k)))]; };
 const exById = id => CEX[id] || ALL.find(e => e.id === id);
 const exByName = name => { const t = slug(clean(name)); return Object.values(CEX).find(e => slug(e.n) === t) || ALL.find(e => slug(e.n) === t); };
+/** Clave única de un ejercicio (id del catálogo o slug del nombre sin series). */
+const exKey = n => { const e = exByName(n); return e ? e.id : slug(clean(String(n))); };
+/** Quita ejercicios repetidos (por id o nombre) conservando el primero; opcionalmente ignora claves ya usadas. */
+const uniqNames = (arr, used = new Set()) => { const seen = new Set(used); return (arr || []).filter(n => { const k = exKey(n); if (seen.has(k)) return false; seen.add(k); return true; }); };
 const videoUrl = name => 'https://www.youtube.com/results?search_query=' + encodeURIComponent('cómo hacer ' + clean(name) + ' técnica correcta');
 const STYLES = {
   batch: ['Batch Cooking', 'Cocinas 1-2 días y porcionas la semana.'],
@@ -622,10 +628,10 @@ const INTAKE_Q = (miss, needDays, needLw, needPhase) => { const q = [];
 const routineExercisesForDate = iso => S.routineEdits[iso] || [];
 /** Tarjetas del día: aplica el Smart Swap de esa fecha (ejercicio propio con su historial) y marca el finalizador (último aislamiento de un músculo). */
 const cardsFor = iso => {
-  const base = routineExercisesForDate(iso).map(exByName).filter(Boolean);
-  return base.map((e, i) => { const sw = S.swapsBy[iso]?.[e.id], alt = sw && exById(sw.to), x = alt ? { ...alt, swapFrom: e.id } : e;
-    const lastOfMuscle = !base.slice(i + 1).some(o => o.k === e.k);
-    return { ...x, fin: x.role === 'i' && lastOfMuscle && base.slice(0, i).some(o => o.k === e.k) }; });
+  const base0 = uniqNames(routineExercisesForDate(iso)).map(exByName).filter(Boolean), seen = new Set();
+  // Smart Swap primero; luego filtro único por id (nunca dos tarjetas del mismo ejercicio) y el finalizador se recalcula sobre la lista ya limpia.
+  const sw = base0.map(e => { const s0 = S.swapsBy[iso]?.[e.id], alt = s0 && exById(s0.to); return alt ? { ...alt, swapFrom: e.id } : e; }).filter(x => { if (seen.has(x.id)) return false; seen.add(x.id); return true; });
+  return sw.map((x, i) => { const lastOfMuscle = !sw.slice(i + 1).some(o => o.k === x.k); return { ...x, fin: x.role === 'i' && lastOfMuscle && sw.slice(0, i).some(o => o.k === x.k) }; });
 };
 
 const dayState = iso => {
@@ -653,7 +659,7 @@ const profileCard = () => `<div class="card"><div class="font-bold mb-2">1 · Pe
   ${goalSelect(true)}<div class="text-xs text-zinc-500 mt-1">🔒 Al calcular, el tipo de dieta queda fijo: definición 10 semanas · volumen 12 · mantenimiento 8.</div>
   <button class="btn fill w-full mt-2" data-act="profile">Calcular mis macros</button></div>`;
 const nOn = (k, v) => { const c = S.nutritionPreferences[k]; return Array.isArray(c) ? c.includes(v) : String(c) === v; };
-const nGroup = q => `<div class="nq"><div class="nq-t">${q.q}${q.multi ? ' <span class="text-zinc-500">(varias)</span>' : ''}</div><div class="quick-prompts !mt-1">${q.opts.map(([v, l]) => `<button class="chip ${nOn(q.k, v) ? 'on' : ''}" data-act="nopt" data-k="${q.k}" data-v="${v}">${l}</button>`).join('')}</div>${q.k === 'budget' ? budgetHint() : ''}</div>`;
+const nGroup = q => q.text ? `<div class="nq"><div class="nq-t">${q.q}</div><div class="flex gap-2 mt-1"><input id="n-${q.k}" type="text" maxlength="200" class="flex-1" placeholder="Ej. odio el hígado, la avena me cae pesada" value="${esc(S.nutritionPreferences[q.k] || '')}"><button class="btn ghost" data-act="ntext" data-k="${q.k}">Guardar</button></div></div>` : `<div class="nq"><div class="nq-t">${q.q}${q.multi ? ' <span class="text-zinc-500">(varias)</span>' : ''}</div><div class="quick-prompts !mt-1">${q.opts.map(([v, l]) => `<button class="chip ${nOn(q.k, v) ? 'on' : ''}" data-act="nopt" data-k="${q.k}" data-v="${v}">${l}</button>`).join('')}</div>${q.k === 'budget' ? budgetHint() : ''}</div>`;
 const nutritionCoachCard = () => {
   const miss = N.missing(S.nutritionPreferences, !!S.target), ok = !miss.length;
   return `<div class="card on"><div class="text-xs text-zinc-500 uppercase tracking">${ok ? 'Perfil completo' : 'Entrevista nutricional · obligatoria'}</div>
@@ -690,7 +696,7 @@ const nutritionCoachCard = () => {
 </div>
 <div class="card"><div class="font-bold mb-1">${S.target ? '' : '2 · '}Respuestas rápidas</div><div class="text-xs text-zinc-500 mb-2">Toca para responder sin escribir. Todo lo marcado alimenta tu menú.</div>
   ${N.QUESTIONS.filter(q => q.req).map(nGroup).join('')}
-  <details class="mt-2" ${N.QUESTIONS.filter(q => !q.req).some(q => (S.nutritionPreferences[q.k] || []).length) ? 'open' : ''}><summary class="text-sm text-zinc-400" style="min-height:40px;display:flex;align-items:center">Afinar más (restricciones, suplementos, obstáculos)</summary>${N.QUESTIONS.filter(q => !q.req).map(nGroup).join('')}</details></div>
+  <details class="mt-2" ${N.QUESTIONS.filter(q => !q.req).some(q => (S.nutritionPreferences[q.k] || []).length) ? 'open' : ''}><summary class="text-sm text-zinc-400" style="min-height:40px;display:flex;align-items:center">Afinar más (alimentos que odias, restricciones, suplementos, obstáculos)</summary>${N.QUESTIONS.filter(q => !q.req).map(nGroup).join('')}</details></div>
 ${ok && S.foodsOk ? `<div class="card"><div class="flex justify-between items-center gap-2"><div class="text-sm"><b>🥗 Tus alimentos</b><div class="text-xs text-zinc-400">Quita o activa proteínas, carbohidratos y verduras del menú.</div></div><button class="chip on !px-3 flex-none" data-act="foodsopen">Editar</button></div></div>` : ''}
 <button class="btn fill w-full" data-act="nutriplan" ${ok ? '' : 'disabled'}>${ok ? (S.foodsOk ? 'Ver mi plan nutricional →' : '🥗 Revisar mis alimentos y generar plan →') : `Faltan ${miss.length} dato${miss.length > 1 ? 's' : ''} para abrir tu plan`}</button>`;
 };
@@ -920,6 +926,7 @@ const comfortCard = () => !comfortOn() ? '' : `<div class="card on mt-3"><div cl
   <div class="flex gap-2 mt-2"><button class="btn fill flex-1" data-act="comfort">Elegir ejercicios</button><button class="btn ghost flex-1" data-act="comfortdone">Así está bien</button></div></div>`;
 const reviewCard = () => !S.trainingConfigured ? '' : `<div class="card mt-3"><div class="flex justify-between items-center gap-2"><div class="min-w-0 text-sm"><b>🔎 Revisar y corregir mi rutina</b><div class="text-xs text-zinc-400">Verifica recuperación (48-72 h), ejercicios repetidos y estructura. Funciona aunque esté bloqueada.${AI_ON ? ' La IA da su opinión.' : ''}</div></div><button class="chip on !px-3 flex-none" data-act="reviewplan">Revisar</button></div></div>`;
 const trainingRoutinePanel = () => `<div class="routine-panel">
+  <button class="btn ghost w-full mb-2" data-act="mechopen">⚙️ Preferencias mecánicas${mechPrefs().prio || mechPrefs().avoid || (mechPrefs().angles || []).length ? ' · activas' : ''}</button>
   ${comfortCard()}
   ${reviewCard()}
   ${deloadCard()}
@@ -938,8 +945,17 @@ const WZ_DAYS = { c31: { l: '3 entrenos + 1 descanso (ciclo)', days: 3, cycle: t
 const WZ_EQ = { mancuerna: 'Mancuernas', polea: 'Polea', maquina: 'Máquinas', barra: 'Barra libre', smith: 'Smith', peso: 'Peso corporal' };
 const wzd = () => S.wz.d;
 const wzSave = () => store.set('wzDraft', S.wz.d);
-const wzCapture = () => { for (const [k, id] of [['kg', 'wz-kg'], ['h', 'wz-h'], ['age', 'wz-a']]) { const el = $('#' + id); if (el && String(el.value).trim() !== '') wzd()[k] = val(id); } };
+const wzCapture = () => { if ($('#mech-av') && S.modal?.type !== 'mech') mechCapture(); for (const [k, id] of [['kg', 'wz-kg'], ['h', 'wz-h'], ['age', 'wz-a']]) { const el = $('#' + id); if (el && String(el.value).trim() !== '') wzd()[k] = val(id); } };
 const wchip = (k, v, l) => `<button class="chip ${wzd()[k] === v ? 'on' : ''}" data-act="wzset" data-k="${k}" data-v="${esc(v)}">${l}</button>`;
+/* ---------- Preferencias mecánicas (cuestionario ultra-específico): la IA y el selector de ejercicios las usan al 100% ---------- */
+const MECH_PRIO = [['', 'Sin preferencia'], ['polea', 'Poleas / cables'], ['mancuerna', 'Mancuernas'], ['barra', 'Barra libre'], ['maquina', 'Máquinas guiadas'], ['smith', 'Smith']];
+const MECH_ANG = [['inclinado', 'Inclinado'], ['plano', 'Plano'], ['declinado', 'Declinado / fondos'], ['unilateral', 'Unilateral'], ['neutro', 'Agarre neutro / martillo']];
+const mechTarget = () => (S.modal?.type === 'mech' ? (S.trainingPreferences.mech ||= {}) : (wzd().mech ||= {}));
+const mechForm = m => `<div class="wz-q">🧲 ¿Con qué prefieres trabajar? (la rutina prioriza esto)</div><div class="chips">${MECH_PRIO.map(([v, l]) => `<button class="chip ${(m.prio || '') === v ? 'on' : ''}" data-act="mprio" data-v="${v}">${l}</button>`).join('')}</div>
+  <div class="wz-q">📐 Ángulos y agarres favoritos (varios)</div><div class="chips">${MECH_ANG.map(([v, l]) => `<button class="chip ${(m.angles || []).includes(v) ? 'on' : ''}" data-act="mang" data-v="${v}">${l}</button>`).join('')}</div>
+  <div class="wz-q">🚫 Máquinas o ejercicios que NO quieres (texto libre)</div><input id="mech-av" type="text" maxlength="160" placeholder="Ej. prensa, Smith, dominadas" value="${esc(m.avoid || '')}">
+  <div class="wz-q">📝 Algo más sobre tu mecánica (opcional)</div><input id="mech-notes" type="text" maxlength="200" placeholder="Ej. me gusta el tempo lento, evito agarres pronados" value="${esc(m.notes || '')}">`;
+const mechCapture = () => { const m = mechTarget(), av = $('#mech-av'), nt = $('#mech-notes'); if (av) m.avoid = av.value.trim().slice(0, 160); if (nt) m.notes = nt.value.trim().slice(0, 200); };
 const wzView = () => {
   const d = wzd(), st = S.wz.step, home = d.place === 'casa';
   const head = `<div class="text-xs text-zinc-500 uppercase tracking">Paso obligatorio · ${st} de 3</div><div class="wz-bar"><i style="width:${st * 33.4}%"></i></div>`;
@@ -959,7 +975,8 @@ const wzView = () => {
   else body = `<div class="font-bold text-xl neon">Tus preferencias</div><div class="text-sm text-zinc-400 mb-1">Elige lo que más disfrutas y tienes a la mano: así no abandonas.</div>
     <div class="wz-q">🏋️ ¿Qué equipo prefieres usar? (varios)</div><div class="chips">${Object.entries(WZ_EQ).filter(([k]) => !home || ['mancuerna', 'peso'].includes(k)).map(([k, l]) => `<button class="chip ${(d.equip || []).includes(k) ? 'on' : ''}" data-act="wzeq" data-v="${k}">${l}</button>`).join('')}</div>
     <div class="wz-q">🩹 ¿Alguna molestia o lesión?</div><div class="chips">${[['ninguna', 'Ninguna'], ['hombro', 'Hombro'], ['rodilla', 'Rodilla'], ['espalda', 'Espalda baja'], ['muneca', 'Muñeca/codo']].map(([k, l]) => `<button class="chip ${(d.inj || []).includes(k) ? 'on' : ''}" data-act="wzinj" data-v="${k}">${l}</button>`).join('')}</div>
-    <div class="text-xs text-zinc-500 mt-2">Evito los ejercicios que más cargan esa zona. Si el dolor es persistente, consulta a un profesional de la salud.</div>`;
+    <div class="text-xs text-zinc-500 mt-2">Evito los ejercicios que más cargan esa zona. Si el dolor es persistente, consulta a un profesional de la salud.</div>
+    <div class="font-bold text-lg neon mt-4">Tu mecánica ideal</div>${mechForm(d.mech || {})}`;
   return `<div style="padding:calc(env(safe-area-inset-top) + 18px) 0 40px"><img src="logo.png" width="70" height="70" alt="" style="margin:0 auto 10px;border-radius:50%">${head}<div class="card">${body}</div>
     <div class="flex gap-2 mt-3">${st > 1 ? '<button class="btn ghost flex-1" data-act="wzback">← Atrás</button>' : ''}<button class="btn fill flex-1" data-act="${st < 3 ? 'wznext' : 'wzfinish'}">${st < 3 ? 'Siguiente →' : '⚡ Generar mi rutina'}</button></div></div>`;
 };
@@ -1359,6 +1376,9 @@ const sheet = () => {
   const m = S.modal; if (!m) return '';
   if (m.type === 'acr') { const g = GLOSSARY[m.k];
     return `<div class="sheet"><div><div class="text-xs text-zinc-500 uppercase tracking">Significado</div><div class="font-bold text-lg neon">${esc(m.k)} · ${esc(g.n)}</div><div class="text-sm mt-2">${esc(g.d)}</div>${g.p ? `<div class="text-sm mt-2">🎯 Te conviene si ${esc(g.p)}</div>` : ''}${g.a ? `<div class="text-sm text-zinc-400 mt-2">📲 En tu plan: ${esc(g.a)}</div>` : ''}<button class="btn ghost w-full mt-3" data-act="closemodal">Cerrar</button></div></div>`; }
+  if (m.type === 'mech') return `<div class="sheet"><div style="max-height:92vh;overflow:auto"><div class="text-xs text-zinc-500 uppercase tracking">Entrenamiento</div><div class="font-bold text-xl neon">⚙️ Preferencias mecánicas</div>
+    <div class="text-sm text-zinc-400">Se aplican a los ejercicios que genero y a lo que me pides con la IA.</div>${mechForm(S.trainingPreferences.mech || {})}
+    <button class="btn fill w-full mt-3" data-act="mechsave">Guardar y aplicar</button><button class="btn ghost w-full mt-2" data-act="closemodal">Cancelar</button></div></div>`;
   if (m.type === 'foods') { const P = S.nutritionPreferences, G = N.foodChoices(P), warn = N.checkMenu(nutritionTarget(), P), L = { economico: 'Económico', medio: 'Medio', libre: 'Sin límite' }[P.budget] || 'tu presupuesto', dol = t => '$'.repeat(t);
     return `<div class="sheet"><div style="max-height:92vh;overflow:auto">
     <div class="text-xs text-zinc-500 uppercase tracking">${S.foodsOk ? 'Tus alimentos' : 'Antes de generar tu plan'}</div><div class="font-bold text-xl neon">🥗 Elige tus alimentos</div>
@@ -1663,6 +1683,12 @@ const ACT = {
   backupimport() { $('#bk-file')?.click(); },
   wzset(d) { wzCapture(); wzd()[d.k] = d.v; if (d.k === 'sched' && !wzd().split) wzd().split = WZ_DAYS[d.v].days === 4 ? 'Torso/Pierna' : 'Push/Pull/Legs';
     if (d.k === 'sched') wzd().split = WZ_DAYS[d.v].days === 4 ? 'Torso/Pierna' : 'Push/Pull/Legs'; if (d.k === 'goal' && !wzd().diet) wzd().diet = { definición: 'cut', hipertrofia: 'bulk', fuerza: 'maint' }[d.v]; if (d.k === 'place' && d.v === 'casa') wzd().equip = (wzd().equip || []).filter(e => ['mancuerna', 'peso'].includes(e)); wzSave(); },
+  mprio(d) { mechCapture(); mechTarget().prio = d.v; if (S.modal?.type !== 'mech') wzSave(); },
+  mang(d) { mechCapture(); const m = mechTarget(), a = m.angles || []; m.angles = a.includes(d.v) ? a.filter(x => x !== d.v) : [...a, d.v]; if (S.modal?.type !== 'mech') wzSave(); },
+  mechopen() { S.modal = { type: 'mech' }; S.trainingPreferences.mech ||= {}; },
+  mechsave() { mechCapture(); store.set('trainingPreferences', S.trainingPreferences); X.setMech(S.trainingPreferences.mech);
+    if (planLockActive()) { S.modal = null; return toast('✅ Guardado: tus próximos cambios y la IA lo usarán (tu rutina bloqueada no se altera)'); }
+    S.modal = null; applyPlanToCalendar(0); toast('✅ Rutina ajustada a tu mecánica'); },
   wzeq(d) { const a = wzd().equip || []; wzd().equip = a.includes(d.v) ? a.filter(x => x !== d.v) : [...a, d.v]; wzSave(); },
   wzinj(d) { let a = wzd().inj || []; a = d.v === 'ninguna' ? (a.includes('ninguna') ? [] : ['ninguna']) : a.filter(x => x !== 'ninguna'); if (d.v !== 'ninguna') a = a.includes(d.v) ? a.filter(x => x !== d.v) : [...a, d.v]; wzd().inj = a; wzSave(); },
   wzback() { wzCapture(); S.wz.step = Math.max(1, S.wz.step - 1); wzSave(); },
@@ -1670,11 +1696,11 @@ const ACT = {
     if (S.wz.step === 1) { const miss = [!d.duration && 'el tiempo por sesión', !d.place && 'dónde entrenas', !d.level && 'hace cuánto entrenas', !d.goal && 'tu objetivo', !d.sched && 'cuántos días entrenas'].filter(Boolean); if (miss.length) return alert('Falta elegir: ' + miss.join(', ')); }
     if (S.wz.step === 2) { if (!(d.kg > 30 && d.kg < 300 && d.h > 120 && d.h < 230 && d.age > 13 && d.age < 90)) return alert('Revisa peso (kg), estatura (cm, ej. 166) y edad.'); if (!d.sex || !d.diet) return alert('Elige tu sexo y tu objetivo con el cuerpo.'); }
     S.wz.step++; wzSave(); window.scrollTo?.(0, 0); },
-  wzfinish() { const d = wzd(); if (!(d.equip || []).length) return alert('Elige al menos un tipo de equipo (o «Peso corporal»).'); if (!(d.inj || []).length) return alert('Marca «Ninguna» o la zona con molestia.');
+  wzfinish() { wzCapture(); const d = wzd(); if (!(d.equip || []).length) return alert('Elige al menos un tipo de equipo (o «Peso corporal»).'); if (!(d.inj || []).length) return alert('Marca «Ninguna» o la zona con molestia.');
     const sc = WZ_DAYS[d.sched], days = sc.days, split = d.split || 'Push/Pull/Legs', cycle = !!sc.cycle, restDays = cycle ? sc.rest : 7 - days;
     const wd = days === 3 ? [1, 3, 5] : days === 4 ? [1, 2, 4, 6] : days === 5 ? [1, 2, 3, 5, 6] : [1, 2, 3, 4, 5, 6];
     const schedule = { days, split, cycle, workDays: days, restDays, startDate: today(), named: false, weekdays: wd };
-    Object.assign(S.trainingPreferences, { goal: d.goal, level: d.level, place: d.place, duration: d.duration + ' min', equip: d.equip, injuries: d.inj.includes('ninguna') ? 'ninguna' : d.inj.join(', '), phaseDiet: d.diet, bodyKg: d.kg, heightCm: d.h, age: d.age, sex: d.sex });
+    Object.assign(S.trainingPreferences, { goal: d.goal, level: d.level, place: d.place, duration: d.duration + ' min', equip: d.equip, injuries: d.inj.includes('ninguna') ? 'ninguna' : d.inj.join(', '), phaseDiet: d.diet, bodyKg: d.kg, heightCm: d.h, age: d.age, sex: d.sex, mech: { ...(d.mech || {}) } }); X.setMech(S.trainingPreferences.mech);
     S.trainingSchedule = schedule; const request = { days, split, cycle, restDays, schedule, goal: d.goal, level: d.level, lw: { none: true } };
     S.trainingPlan = buildTrainingPlan('', request); S.trainingConfigured = true; S.trainingOnboarded = true; S.showRoutine = false; S.coachPending = null;
     S.planLock = makeLock(); S.profile = { h: d.h, age: d.age, sex: d.sex, goal: d.diet }; S.dietLock = makeDietLock(d.diet); S.target = E.initial({ kg: d.kg, ...S.profile }); S.weights = [{ d: today(), kg: d.kg }];
@@ -1734,7 +1760,8 @@ const ACT = {
     const name = ($('#routine-exercise')?.value || '').trim();
     if (!name) return;
     const { date, index } = S.modal, exercises = [...routineExercisesForDate(date)];
-    if (index < 0) exercises.push(name); else exercises[index] = name; S.customDay[date] = true; store.set('customDay', S.customDay);
+    if (index < 0) { if (exercises.some(n => exKey(n) === exKey(name))) { S.modal = null; return alert('Ese ejercicio ya está en esta sesión.'); } exercises.push(name); }
+    else { if (exercises.some((n, i) => i !== index && exKey(n) === exKey(name))) { S.modal = null; return alert('Ese ejercicio ya está en esta sesión.'); } exercises[index] = name; } S.customDay[date] = true; store.set('customDay', S.customDay);
     S.routineEdits[date] = exercises;
     store.set('routineEdits', S.routineEdits);
     S.modal = null;
@@ -1771,7 +1798,7 @@ const ACT = {
   daygenerate() { if (planLockActive()) return lockedToast();
     const ks = S.dayMuscles[S.routineDate] || []; if (!ks.length) return alert('Elige al menos un músculo');
     delete S.dayRest[S.routineDate]; store.set('dayRest', S.dayRest);
-    S.routineEdits[S.routineDate] = strategicOrder(ks).flatMap(k => CATALOG[k]); delete S.doneEx[S.routineDate]; store.set('doneEx', S.doneEx);
+    S.routineEdits[S.routineDate] = uniqNames(strategicOrder(ks).flatMap(k => CATALOG[k])); delete S.doneEx[S.routineDate]; store.set('doneEx', S.doneEx);
     S.open = exByName(S.routineEdits[S.routineDate][0])?.id || null; store.set('routineEdits', S.routineEdits); S.customDay[S.routineDate] = true; store.set('customDay', S.customDay);
   },
   tab: d => { S.tab = d.t; S.open = null; }, toggle: d => S.open = S.open === d.id ? null : d.id,
@@ -1883,6 +1910,7 @@ const ACT = {
     S.nutritionBusy = false;
     store.set('nutritionChat', S.nutritionChat);
   },
+  ntext(d) { const v = ($('#n-' + d.k)?.value || '').trim().slice(0, 200), p = { ...S.nutritionPreferences }; if (v) p[d.k] = v; else delete p[d.k]; S.nutritionPreferences = p; store.set('nutritionPreferences', p); toast(v ? '✅ Lo tendré en cuenta en tu menú' : 'Preferencia quitada'); },
   nopt(d) {
     const q = N.QUESTIONS.find(x => x.k === d.k); if (!q) return;
     const p = { ...S.nutritionPreferences }, v = d.v;
@@ -2105,10 +2133,11 @@ function applyPlanToCalendar(from = -14) {
       const dow = (new Date(iso + 'T12:00:00').getDay() + 6) % 7; let occ = 0; // la misma sesión repetida en la semana (p. ej. Push A el miércoles y el domingo) usa OTRA variante de ejercicios
       for (let j = dow; j > 0; j--) { const s2 = routineSessionForDate(shiftIsoDate(iso, -j)); if (s2 && s2.day === ses.day) occ++; }
       const variantOf = k => variantOf0(k) + occ * totalK(k);
-      const raw = strategicOrder(ks).flatMap(k => { const b = pickFor(k, perMuscle, variantOf(k)); if (k === 'hombros' && perMuscle >= 2) { const r = X.pickRear({ ...exOpts(), variant: variantOf(k) }); if (r) b.push(r); } return b; }); // deltoide posterior: con el empuje
+      const raw = strategicOrder(ks).flatMap(k => { const b = pickFor(k, perMuscle, variantOf(k)); if (k === 'hombros' && perMuscle >= 2) { const r = X.pickRear({ ...exOpts(), avoid: [...exOpts().avoid, ...b.map(x => exByName(x)?.n).filter(Boolean)], variant: variantOf(k) }); if (r && !b.some(x => exKey(x) === exKey(r))) b.push(r); } return b; }); // deltoide posterior: con el empuje
+      const rawU = uniqNames(raw);
       // Garantía final: ningún ejercicio se repite en el mismo día ni en otro día de la misma semana; si choca, se cambia por una alternativa real del mismo músculo.
       const seenW = (weekSeen[shiftIsoDate(iso, -dow)] ||= new Set()), mine = new Set(), eo = exOpts(), bad = avoidList();
-      S.routineEdits[iso] = raw.map(b => { const e = exByName(b); if (!e) return b; if (!seenW.has(e.id) && !mine.has(e.id)) { mine.add(e.id); return b; }
+      S.routineEdits[iso] = rawU.map(b => { const e = exByName(b); if (!e) return b; if (!seenW.has(e.id) && !mine.has(e.id)) { mine.add(e.id); return b; }
         const alt = X.swapOptions(e, { exclude: [...seenW, ...mine], equip: eo.equip, place: eo.place, n: 8 }).find(c => !bad.includes(c.n)); if (!alt) return null; mine.add(alt.id); return `${alt.n} ${alt.sets}×${alt.rng}`; }).filter(Boolean);
       mine.forEach(id => seenW.add(id));
     } else { delete S.dayMuscles[iso]; delete S.routineEdits[iso]; S.dayRest[iso] = true; }
@@ -2126,7 +2155,7 @@ function normalizePlanMuscles() {
       if (blocks.some(b => REAR_RE.test(b))) { blocks = blocks.filter(b => !REAR_RE.test(b)); if (!blocks.some(b => /remo con mancuerna/i.test(b))) blocks.push('Remo con mancuerna apoyado 3x10-12'); fixes.push(`Saqué el deltoide posterior de ${sn.day} (va con el día de empuje).`); }
     }
     if (/push/i.test(sn.day) && !blocks.some(b => REAR_RE.test(b))) { const i = blocks.findIndex(b => /lateral/i.test(b)); blocks.splice(i >= 0 ? i + 1 : blocks.length, 0, 'Pájaros o pec deck inverso 3x12-15'); fixes.push(`Añadí deltoide posterior a ${sn.day} (como en el ciclo de CBum: con pecho y tríceps).`); }
-    return { ...sn, m, blocks }; });
+    return { ...sn, m, blocks: uniqNames(blocks) }; });
   if (fixes.length) { store.set('trainingPlan', S.trainingPlan); }
   return fixes;
 }
@@ -2322,7 +2351,7 @@ const hist = list => list.slice(-9).map(m => ({ role: m.role, text: String(m.tex
 function normPlan(arr) {
   if (!Array.isArray(arr)) return [];
   return arr.slice(0, 7).map((x, i) => {
-    const day = String(x?.day || `Día ${i + 1}`).slice(0, 60), blocks = (Array.isArray(x?.blocks) ? x.blocks : []).map(b => String(b).slice(0, 120)).filter(Boolean).slice(0, 8);
+    const day = String(x?.day || `Día ${i + 1}`).slice(0, 60), blocks = uniqNames((Array.isArray(x?.blocks) ? x.blocks : []).map(b => String(b).slice(0, 120)).filter(Boolean).filter(b => !exOpts().avoid.includes(exByName(b)?.n))).slice(0, 8);
     const m = (Array.isArray(x?.muscles) ? x.muscles : []).map(k => String(k).toLowerCase()).filter(k => MUSCLES[k]);
     return { day, focus: String(x?.focus || '').slice(0, 100), blocks, m: m.length ? m : musclesForSession(day) };
   }).filter(x => x.blocks.length);
@@ -2341,6 +2370,9 @@ function applyRoutineCommand(pl) {
   if (pr.injuries) tp.injuries = String(pr.injuries).slice(0, 160);
   if (pr.place) tp.place = /casa/i.test(pr.place) ? 'casa' : 'gimnasio';
   if (pr.duration) tp.duration = String(pr.duration).slice(0, 30);
+  if (pr.mech && typeof pr.mech === 'object') { const m = (tp.mech ||= {}), pm = pr.mech; // preferencias mecánicas dichas al coach: se guardan y mandan en toda la selección
+    if (X.EQ[pm.prio] || pm.prio === '') m.prio = pm.prio; if (Array.isArray(pm.angles)) m.angles = pm.angles.map(String).filter(v => MECH_ANG.some(x => x[0] === v));
+    if (typeof pm.avoid === 'string') m.avoid = pm.avoid.slice(0, 160); if (typeof pm.notes === 'string') m.notes = pm.notes.slice(0, 200); X.setMech(m); }
   const ph = tp.goal !== 'fuerza' && PHASES.find(x => x[1] === String(pr.phase || '').toLowerCase()); if (ph) Object.assign(tp, { phase: ph[1], goal: ph[2], phaseDiet: ph[3] });
   const lwIso = ISO_RX.test(lw.date || '') ? lw.date : '', focus = FOCUS_RX[lw.focus] ? lw.focus : '';
   const schedule = { days, split: String(sc.split || 'Push/Pull/Legs').slice(0, 40), cycle, workDays: cycle ? work : days, restDays: cycle ? rest : 7 - days,
@@ -2398,7 +2430,7 @@ function applyMacrosCommand(pl) {
   const wasReady = N.ready(S.nutritionPreferences, !!S.target), pr = pl.preferences;
   if (pr && typeof pr === 'object') {
     const p = { ...S.nutritionPreferences }; let ch = false;
-    for (const q of N.QUESTIONS) { if (pr[q.k] == null) continue; const ok = q.opts.map(o => o[0]);
+    for (const q of N.QUESTIONS) { if (pr[q.k] == null) continue; if (q.text) { const t = String(pr[q.k]).trim().slice(0, 200); if (t) { p[q.k] = t; ch = true; } continue; } const ok = q.opts.map(o => o[0]);
       if (q.multi) { const a = [].concat(pr[q.k]).map(String).filter(v => ok.includes(v)); if (a.length) { p[q.k] = a; ch = true; } }
       else if (ok.includes(String(pr[q.k]))) { p[q.k] = q.k === 'meals' ? +pr[q.k] : String(pr[q.k]); ch = true; if (q.k === 'style') { S.style = p.style; store.set('style', S.style); } } }
     if (ch) { S.nutritionPreferences = { ...p, updatedAt: new Date().toISOString() }; store.set('nutritionPreferences', S.nutritionPreferences); }

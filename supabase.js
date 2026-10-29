@@ -173,24 +173,24 @@ const SCHEMA_NOTE = `FORMATO DE RESPUESTA (obligatorio): responde SOLO un objeto
 const SCHEMA_TRAIN = `FORMATO DE RESPUESTA (obligatorio): responde SOLO un objeto JSON válido, sin texto fuera de él:
 {"note":"...","command":"update_routine" | "none","payload":...}
 - note: mensaje humano para el usuario (2-6 frases, sin listas numeradas ni viñetas).
-- command "none" (payload null) mientras falte algo imprescindible: en note haz UNA sola pregunta natural. Imprescindibles: objetivo, nivel, días de entrenamiento y división (o ciclo), cuándo fue su último entrenamiento y qué hizo (o que lleva tiempo sin entrenar) y si tiene lesiones o molestias. NUNCA pidas peso ni estatura. La fase (volumen, definición…) dedúcela del objetivo y solo pregúntala si es ambigua.
+- command "none" (payload null) mientras falte algo imprescindible: en note haz UNA sola pregunta natural. Imprescindibles: objetivo, nivel, días de entrenamiento y división (o ciclo), cuándo fue su último entrenamiento y qué hizo (o que lleva tiempo sin entrenar) y si tiene lesiones o molestia. Al crear o reestructurar la rutina, si preferences.mech del contexto está vacío, pregunta UNA vez y textualmente por su mecánica (poleas vs mancuernas vs barras, ángulos favoritos y máquinas o ejercicios que no quiere) y guárdalo en payload.preferences.mech; si ya existe, úsalo sin volver a preguntars. NUNCA pidas peso ni estatura. La fase (volumen, definición…) dedúcela del objetivo y solo pregúntala si es ambigua.
 - command "update_routine" en cuanto tengas todo eso (si dice que no tiene molestias, ya lo tienes). Nunca si planLock está activo.
 payload de update_routine:
 {"trainingPlan":[{"day":"Día 1 · Push A","focus":"Pecho, hombros y tríceps","muscles":["pecho","hombros","triceps"],"blocks":["Press inclinado con mancuernas 4x6-8","..."]}],
  "schedule":{"split":"Push/Pull/Legs","cycle":false,"workDays":3,"restDays":1,"weekdays":[1,3,5]},
  "startIndex":0,
- "preferences":{"goal":"hipertrofia|definición|fuerza|consolidación|mantenimiento|dieta inversa","phase":"volumen|consolidación|definición|dieta inversa|mantenimiento","level":"principiante|intermedio|avanzado","injuries":"texto o ninguna","place":"gimnasio|casa","duration":"60 min"},
+ "preferences":{"goal":"hipertrofia|definición|fuerza|consolidación|mantenimiento|dieta inversa","phase":"volumen|consolidación|definición|dieta inversa|mantenimiento","level":"principiante|intermedio|avanzado","injuries":"texto o ninguna","place":"gimnasio|casa","duration":"60 min","mech":{"prio":"polea|mancuerna|barra|maquina|smith|","angles":["inclinado|plano|declinado|unilateral|neutro"],"avoid":"máquinas o ejercicios que NO quiere","notes":"texto"}},
  "lastWorkout":{"date":"AAAA-MM-DD o vacío","focus":"push|pull|legs|torso|full|","none":false}}
 Reglas del payload: trainingPlan = una entrada por sesión distinta del ciclo (PPL: Push, Pull, Legs; en PPL de 6 días puedes usar A/B), 3-6 bloques por sesión con series x reps. "muscles" solo de: pecho, espalda, hombros, biceps, triceps, core, cuads, isquios, gluteos, gemelos. weekdays: 0=domingo … 6=sábado, solo si entrena días fijos de la semana; si usa ciclo (ej. 3 entrenando y 1 descanso) pon cycle true con workDays y restDays y weekdays []. startIndex = índice (desde 0) de la sesión que toca en el PRIMER día de entreno (continúa donde quedó según su último entrenamiento). Adapta ejercicios a lesiones y nivel (principiante: sin FST-7). Usa "hoy" y "diaSemana" del contexto para calcular fechas.`;
 const SCHEMA_NUTRI = `FORMATO DE RESPUESTA (obligatorio): responde SOLO un objeto JSON válido, sin texto fuera de él:
 {"note":"...","command":"update_macros" | "none","payload":...}
 - note: mensaje humano (2-6 frases, sin listas numeradas ni viñetas).
-- command "none" (payload null) si falta algo imprescindible: haz UNA sola pregunta natural. Imprescindibles: peso, estatura, edad, sexo y objetivo (si perfil es null), y presupuesto, proteínas que come, tiempo de cocina, nevera, estilo y comidas al día. El campo faltanParaAbrirPlan del contexto lista lo que la app aún necesita.
+- command "none" (payload null) si falta algo imprescindible: haz UNA sola pregunta natural. Imprescindibles: peso, estatura, edad, sexo y objetivo (si perfil es null), y presupuesto, proteínas que come, tiempo de cocina, nevera, estilo, carbohidratos y grasas que prefiere o tolera mejor (pregúntalo textualmente; pregunta también qué alimentos odia o le caen mal) y comidas al día. El campo faltanParaAbrirPlan del contexto lista lo que la app aún necesita.
 - command "update_macros" cuando tengas datos nuevos que guardar (perfil, macros o preferencias), aunque falte algo más: guarda lo que ya sabes y pregunta lo siguiente en note.
 payload de update_macros (incluye solo lo que corresponda):
 {"profile":{"kg":72,"h":175,"age":28,"sex":"m|f","goal":"cut|maint|bulk"},
  "target":{"kcal":2400,"p":150,"f":65},
- "preferences":{"budget":"economico|medio|libre","proteins":["pollo","molida","res","cerdo","pescado","atun","huevo","visceras","legumbres"],"cook":"rapido|medio|largo","fridge":"si|mixto|no","style":"batch|hibrido|dia|libres","meals":3,"restrict":["ninguna|lacteos|gluten|vegetariano"],"eatsout":"si|no","supps":["whey|creatina|ninguno"],"barriers":["antojos|tiempo|fuera|cocinar|dinero|hambre"]}}
+ "preferences":{"budget":"economico|medio|libre","proteins":["pollo","molida","res","cerdo","pescado","atun","huevo","visceras","legumbres"],"cook":"rapido|medio|largo","fridge":"si|mixto|no","style":"batch|hibrido|dia|libres","carbs":["todo|arroz|papa|platano|pasta|avena|pan|arepa|banano"],"fats":["todo|aguacate|mani|aceite"],"dislikes":"texto libre con lo que odia o le cae mal","meals":3,"restrict":["ninguna|lacteos|gluten|vegetariano"],"eatsout":"si|no","supps":["whey|creatina|ninguno"],"barriers":["antojos|tiempo|fuera|cocinar|dinero|hambre"]}}
 profile es obligatorio la primera vez (cuando perfil es null); la app calcula las calorías con Mifflin-St Jeor si no mandas target. Si mandas target: kcal dentro de un rango sano para su objetivo, proteína 1.6-2.2 g/kg, grasa 0.7-1 g/kg; los carbohidratos los completa la app.`;
 const schemaFor = t => (/training/.test(t) ? SCHEMA_TRAIN : /nutrition/.test(t) ? SCHEMA_NUTRI : SCHEMA_NOTE);
 /** Interpreta la respuesta JSON de la IA; si no es JSON válido, el texto se usa como mensaje y no se ejecuta nada. */
@@ -200,33 +200,56 @@ function parseReply(text) {
   const command = ['update_routine', 'update_macros'].includes(o.command) ? o.command : 'none';
   return { note: String(o.note ?? '').trim() || (command === 'none' ? text : 'Listo.'), command, payload: command === 'none' ? null : (o.payload ?? null) };
 }
+/** Contexto compacto: sin nulos/vacíos ni espacios; si aún pasa del límite se descartan primero los bloques más grandes y menos críticos (nunca se corta el JSON a la mitad). */
+const KEEP_CTX = new Set(['preferences', 'target', 'profile', 'missing', 'faltanParaAbrirPlan', 'planLock', 'schedule', 'trainingPlan', 'question', 'task']);
+const prune = v => { if (Array.isArray(v)) return v.map(prune).filter(x => x !== undefined); if (v && typeof v === 'object') { const o = {}; for (const [k, x] of Object.entries(v)) { const p = prune(x); if (p !== undefined && p !== '' && !(Array.isArray(p) && !p.length) && !(p && typeof p === 'object' && !Array.isArray(p) && !Object.keys(p).length)) o[k] = p; } return o; } return v == null ? undefined : v; };
+function compactCtx(ctx, limit) {
+  const c = prune(ctx) || {}; let s = JSON.stringify(c);
+  if (s.length <= limit) return s;
+  const keys = Object.keys(c).filter(k => !KEEP_CTX.has(k)).sort((a, b) => JSON.stringify(c[b]).length - JSON.stringify(c[a]).length);
+  for (const k of keys) { if (s.length <= limit) break; const v = c[k]; if (Array.isArray(v) && v.length > 6) c[k] = v.slice(-6); else delete c[k]; s = JSON.stringify(c); }
+  return s.length > limit ? s.slice(0, limit) : s;
+}
+/** Modo por tarea: RÁPIDO (validar, responder dudas, anotar datos) vs PROFUNDO (crear/reestructurar rutina o dieta, recalcular macros). */
+const DEEP_RX = /reestructur|rehaz|rehac|arma(r|me)? (mi |una |la )?(rutina|dieta|plan)|crea(r|me)? (mi |una |la )?(rutina|dieta|plan)|genera(r|me)? (mi |una |la )?(rutina|dieta|plan)|cambia(r|me)? (toda |mi |la )?(rutina|dieta|division|división)|nueva (rutina|dieta)|recalcul|configuraci[oó]n inicial|ajusta(r)? (mi |la )?(rutina|dieta)/i;
+export function pickMode(task, payload = {}, text = '') {
+  if (payload.mode === 'deep' || payload.mode === 'fast') return payload.mode;
+  if (/audit|restructure|reestruct/i.test(String(payload.task || task))) return 'deep';
+  if (/training/.test(String(payload.task || task)) && !(payload.trainingPlan || []).length) return 'deep'; // aún no hay rutina: toca generar el plan completo
+  return DEEP_RX.test(String(text)) ? 'deep' : 'fast';
+}
 /** Modo PRUEBAS: llamada directa a OpenAI con la clave guardada en este dispositivo (sin login ni Supabase). */
 async function direct(task, payload) {
   const isMeal = task === 'meal';
   const { systemPrompt = '', recentMessages = [], currentMessage, question, ...ctx } = payload;
   const cur = String(isMeal ? payload.text ?? '' : (currentMessage ?? question ?? `Tarea automática "${payload.task ?? task}": redacta un consejo breve y concreto usando el contexto.`));
+  const deep = !isMeal && pickMode(task, payload, cur) === 'deep';
   const system = isMeal
     ? `${BASE}\nTarea: estima los macros de la comida descrita. Responde SOLO JSON: {"items":[{"name":str,"k":int,"p":int,"c":int,"f":int}],"confidence":0-1,"note":str}. Si faltan cantidades asume porciones típicas y baja la confianza.`
-    : `${BASE}\n${systemPrompt}\n${schemaFor(String(payload.task ?? task))}\nContexto (JSON) de ${sessionStorage.getItem('al:profile') || 'juani'}: ${JSON.stringify(ctx).slice(0, 14000)}`;
+    : `${BASE}\n${systemPrompt}\n${schemaFor(String(payload.task ?? task))}\nContexto (JSON) de ${sessionStorage.getItem('al:profile') || 'juani'}: ${compactCtx(ctx, deep ? 14000 : 6500)}`;
   let hist = isMeal ? [] : recentMessages.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: String(m.text ?? '') }));
   while (hist.length && hist[hist.length - 1].role === 'assistant') hist.pop();               // respuesta local provisional
   if (hist.length && hist[hist.length - 1].content === cur) hist.pop();                       // el mensaje actual se agrega aparte
   const messages = [{ role: 'system', content: system }, ...hist.slice(-8), { role: 'user', content: cur }];
   const heavy = /training|nutrition|audit/.test(String(payload.task || task));
-  const text = await generate(messages, { heavy, isMeal });
+  const text = await generate(messages, { heavy: heavy && deep, isMeal, deep, fast: !isMeal && !deep });
   if (isMeal) { let o; try { o = JSON.parse(text); } catch { try { o = JSON.parse((text.match(/\{[\s\S]*\}/) || [''])[0] || '{}'); } catch { o = {}; } } if (!Array.isArray(o.items) || !o.items.length) throw new AIError('other', 'No pude estimar la comida'); return o; }
   return parseReply(text);
 }
 
 /* Llamadas a cada proveedor + cadena de respaldo (reintenta red/saturación y cambia de modelo si hay cupo agotado o no existe). */
-async function gemCall(key, model, messages, { isMeal, vision }) {
+async function gemCall(key, model, messages, { isMeal, vision, deep, fast }, noThink = false) {
   const sys = messages.filter(m => m.role === 'system').map(m => m.content).join('\n\n'), contents = [];
   for (const m of messages) { if (m.role === 'system') continue; const role = m.role === 'assistant' ? 'model' : 'user', text = String(m.content ?? ''), img = m.image ? { inline_data: { mime_type: m.image.mime, data: m.image.b64 } } : null;
     if (contents.length && contents[contents.length - 1].role === role) { const last = contents[contents.length - 1]; last.parts[0].text += '\n\n' + text; if (img) last.parts.push(img); } else contents.push({ role, parts: img ? [{ text }, img] : [{ text }] }); }
   while (contents.length && contents[0].role === 'model') contents.shift();
-  const body = { contents, generationConfig: { maxOutputTokens: isMeal ? (vision ? 6000 : 3000) : 8000, responseMimeType: 'application/json' } };
+  const gen = { maxOutputTokens: isMeal ? (vision ? 6000 : 1800) : fast ? 4096 : 8000, responseMimeType: 'application/json', temperature: isMeal ? 0.2 : fast ? 0.5 : 0.7 };
+  if (!noThink && !vision) gen.thinkingConfig = /gemini-3/.test(model) ? { thinkingLevel: deep ? 'medium' : 'low' } : /gemini-2\.5-(flash|flash-lite)/.test(model) ? { thinkingBudget: deep ? 1024 : 0 } : undefined; // sin «pensar» largo en tareas rápidas: la latencia baja varios segundos
+  if (!gen.thinkingConfig) delete gen.thinkingConfig;
+  const body = { contents, generationConfig: gen };
   if (sys) body.systemInstruction = { parts: [{ text: sys }] };
-  const { res, j } = await http(`${GEM}/models/${encodeURIComponent(model)}:generateContent`, { method: 'POST', headers: { 'x-goog-api-key': key, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, 90000);
+  const { res, j } = await http(`${GEM}/models/${encodeURIComponent(model)}:generateContent`, { method: 'POST', headers: { 'x-goog-api-key': key, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, fast || isMeal ? 40000 : 90000);
+  if (!res.ok && res.status === 400 && gen.thinkingConfig && /think/i.test(JSON.stringify(j || {}))) return gemCall(key, model, messages, { isMeal, vision, deep, fast }, true); // modelo sin ese parámetro
   if (!res.ok) throw statusErr(res, j);
   const c = j?.candidates?.[0], text = (c?.content?.parts || []).filter(p => !p.thought).map(p => p.text || '').join('').trim();
   if (!text) throw new AIError(j?.promptFeedback?.blockReason || c?.finishReason === 'SAFETY' ? 'blocked' : 'empty', j?.promptFeedback?.blockReason || c?.finishReason === 'SAFETY' ? 'Gemini bloqueó esa respuesta. Reformula tu mensaje.' : 'Gemini no devolvió texto. Reintenta.');
@@ -246,13 +269,14 @@ async function oaiCall(key, model, messages, { heavy, isMeal }) {
 async function generate(messages, opts) {
   const key = getKey(), g = providerOf(key) === 'gemini';
   let chain; try { const forced = localStorage.getItem('al:aimodel'); chain = forced ? [forced] : await selectModel(key); } catch (e) { chain = [PROVIDERS[providerOf(key)].fallback]; }
+  if (opts?.fast && !localStorage.getItem('al:aimodel')) { const lite = chain.filter(m => /lite/.test(m)); if (lite.length) chain = [...lite, ...chain.filter(m => !lite.includes(m))]; } // respuestas rápidas: primero el modelo más ligero disponible
   const recentFail = conn.state !== 'ok' && ['network', 'timeout'].includes(conn.kind) && Date.now() - conn.at < 30000; // ya sabemos que no hay red: no hacer esperar
   let last;
   for (const model of chain) {
-    for (let attempt = 0; attempt < (recentFail ? 1 : 3); attempt++) {
+    for (let attempt = 0; attempt < (recentFail ? 1 : 2); attempt++) {
       try { const text = g ? await gemCall(key, model, messages, opts) : await oaiCall(key, model, messages, opts); if (conn.state !== 'ok' || conn.model !== model) setConn({ state: 'ok', kind: '', msg: '', model, provider: pname() }); return text; }
       catch (e) { last = e; if (!(e instanceof AIError)) throw e;
-        if (['network', 'server'].includes(e.kind) || (e.kind === 'timeout' && attempt === 0)) { if (attempt < 2) await sleep(1200 * (attempt + 1)); continue; }
+        if (['network', 'server'].includes(e.kind) || (e.kind === 'timeout' && attempt === 0)) { if (attempt < 1) await sleep(600); continue; }
         if (['model', 'quota', 'empty'].includes(e.kind)) break; // siguiente modelo de la cadena
         throw e; }
     }

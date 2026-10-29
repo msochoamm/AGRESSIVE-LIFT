@@ -87,14 +87,17 @@ export const QUESTIONS = [
   { k: 'cook', req: true, q: '¿Cuánto tiempo tienes para cocinar por comida?', opts: [['rapido', '⚡ ≤ 15 min'], ['medio', '⏱ ~30 min'], ['largo', '👨‍🍳 Sin prisa']] },
   { k: 'fridge', req: true, q: '¿Desayunos y cenas listos en la nevera?', opts: [['si', '🧊 Sí, preparar y recalentar'], ['mixto', '🔀 Mixto'], ['no', '🍳 Cocino al momento']] },
   { k: 'style', req: true, q: '¿Cómo prefieres organizarte?', opts: [['batch', 'Batch Cooking'], ['hibrido', 'Híbrido'], ['dia', 'Cocina al Día'], ['libres', 'Macros Libres']] },
+  { k: 'carbs', req: true, multi: true, q: '¿Qué carbohidratos prefieres o toleras mejor? (el resto no entra en tu menú)', opts: [['todo', '✅ Cualquiera'], ['arroz', 'Arroz'], ['papa', 'Papa'], ['platano', 'Plátano'], ['pasta', 'Pasta'], ['avena', 'Avena'], ['pan', 'Pan'], ['arepa', 'Arepa'], ['banano', 'Banano']] },
+  { k: 'fats', req: true, multi: true, q: '¿Qué grasas prefieres o toleras mejor?', opts: [['todo', '✅ Cualquiera'], ['aguacate', 'Aguacate'], ['mani', 'Maní'], ['aceite', 'Aceite de oliva']] },
+  { k: 'dislikes', q: 'Escribe los alimentos que ODIAS o te caen mal (opcional; ej. «odio el hígado y la avena, el pescado me cae pesado»)', text: true },
   { k: 'meals', req: true, q: '¿Cuántas comidas al día?', opts: [['3', '3'], ['4', '4'], ['5', '5']] },
   { k: 'restrict', q: 'Restricciones (opcional)', multi: true, opts: [['ninguna', 'Ninguna'], ['lacteos', 'Sin lácteos'], ['gluten', 'Sin gluten'], ['vegetariano', 'Vegetariano']] },
   { k: 'eatsout', q: '¿Comes corrientazo / en la calle? (opcional)', opts: [['si', 'Sí, seguido'], ['no', 'Casi nunca']] },
   { k: 'supps', q: 'Suplementos (opcional)', multi: true, opts: [['whey', 'Whey'], ['creatina', 'Creatina'], ['ninguno', 'Ninguno']] },
   { k: 'barriers', q: '¿Qué te hace fallar en la dieta? (opcional)', multi: true, opts: [['antojos', 'Antojos'], ['tiempo', 'Falta de tiempo'], ['fuera', 'Comer fuera'], ['cocinar', 'No sé cocinar'], ['dinero', 'Presupuesto'], ['hambre', 'Mucha hambre']] },
 ];
-export const LABELS = { budget: 'presupuesto', proteins: 'proteínas', cook: 'tiempo de cocina', fridge: 'nevera', style: 'estilo', meals: 'comidas al día', restrict: 'restricciones', eatsout: 'comida en la calle', supps: 'suplementos', barriers: 'obstáculos' };
-export const STEPS = [['profile', 'Perfil y objetivo'], ['budget', 'Presupuesto'], ['proteins', 'Proteínas'], ['cook', 'Tiempo'], ['fridge', 'Nevera'], ['style', 'Estilo'], ['meals', 'Comidas']];
+export const LABELS = { budget: 'presupuesto', proteins: 'proteínas', cook: 'tiempo de cocina', fridge: 'nevera', style: 'estilo', meals: 'comidas al día', carbs: 'carbohidratos', fats: 'grasas', dislikes: 'alimentos que no te gustan', restrict: 'restricciones', eatsout: 'comida en la calle', supps: 'suplementos', barriers: 'obstáculos' };
+export const STEPS = [['profile', 'Perfil y objetivo'], ['budget', 'Presupuesto'], ['proteins', 'Proteínas'], ['cook', 'Tiempo'], ['fridge', 'Nevera'], ['style', 'Estilo'], ['carbs', 'Carbohidratos'], ['fats', 'Grasas'], ['meals', 'Comidas']];
 
 const has = (v) => (Array.isArray(v) ? v.length > 0 : v !== undefined && v !== null && v !== '');
 /** Claves obligatorias que faltan, en orden de pregunta. */
@@ -113,6 +116,8 @@ const ASK = {
   cook: '¿Cuánto tiempo tienes para cocinar por comida: ≤15 min, ~30 min o sin prisa?',
   fridge: '¿Te sirve dejar desayunos y cenas listos en la nevera (overnight oats, pollo desmechado, bowls) para ganar rapidez?',
   style: '¿Cómo prefieres organizarte: batch cooking, híbrido, cocinar al día o macros libres?',
+  carbs: '¿Qué carbohidratos prefieres o toleras mejor (arroz, papa, plátano, pasta, avena, pan, arepa, banano)? Dime también cuáles odias; si te da igual, escribe «cualquiera».',
+  fats: '¿Qué grasas prefieres o toleras mejor (aguacate, maní, aceite de oliva)? Dime cuáles no soportas, o escribe «cualquiera».',
   meals: '¿Cuántas comidas haces al día: 3, 4 o 5?',
 };
 export const askFor = k => ASK[k] || '';
@@ -125,6 +130,15 @@ export function greeting(prefs, hasTarget) {
 /* ---------- Interpretación de texto libre ---------- */
 const norm = t => String(t || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 const PROT_RX = { pollo: /pollo|pechuga|muslo/, molida: /molida/, res: /\bres\b|carne de res|bistec|sobrebarriga|churrasco|lomo de res/, cerdo: /cerdo|chuleta|costilla/, pescado: /pescado|tilapia|trucha|salmon|mojarra/, atun: /atun/, huevo: /huevo/, visceras: /higado|corazon|viscera|menudencia/, legumbres: /lenteja|frijol|garbanzo/ };
+const FOOD_RX = { muslo: /muslo/, pechuga: /pechuga/, molida: /molida/, res: /\bres\b|bistec|lomo de res/, cerdo: /cerdo/, pescado: /pescado|tilapia/, atun: /atun/, huevo: /huevo/, higado: /higado/, corazon: /corazon/, lenteja: /lenteja/, frijol: /frijol/, whey: /whey/, yogur: /yogur/, leche: /leche/, arroz: /arroz/, papa: /\bpapa/, platano: /platano/, pasta: /pasta|espagueti/, avena: /avena/, pan: /\bpan\b/, arepa: /arepa/, banano: /banano/, zuquini: /zuquini|calabacin/, aguacate: /aguacate/, mani: /\bmani\b|cacahuate/, aceite: /aceite/ };
+const POLLO_RX = /\bpollo\b/;
+/** Alimentos que NO se usarán por gusto: lo que la persona odia (texto libre) + los carbohidratos/grasas que no eligió. */
+export function derivedExcluded(prefs = {}) {
+  const out = new Set();
+  for (const [key, kind] of [['carbs', 'carb'], ['fats', 'fat']]) { const sel = prefs[key] || []; if (sel.length && !sel.includes('todo')) Object.entries(FOODS).forEach(([id, f]) => { if (f.kind === kind && !sel.includes(id)) out.add(id); }); }
+  norm(prefs.dislikes || '').split(/[.;\n,]|\by\b/).forEach(seg => { if (!seg.trim()) return; for (const [id, rx] of Object.entries(FOOD_RX)) if (rx.test(seg)) out.add(id); if (POLLO_RX.test(seg)) { out.add('muslo'); out.add('pechuga'); } });
+  return [...out];
+}
 /** Devuelve { prefs, changed:[claves] } sin mutar la entrada. */
 export function parse(text, prefs = {}) {
   const t = norm(text), p = { ...prefs }, changed = new Set(), set = (k, v) => { if (JSON.stringify(p[k]) !== JSON.stringify(v)) { p[k] = v; changed.add(k); } };
@@ -137,6 +151,14 @@ export function parse(text, prefs = {}) {
     for (const [k, rx] of Object.entries(PROT_RX)) if (rx.test(seg)) { neg ? prot.delete(k) : prot.add(k); }
   });
   if ([...prot].sort().join() !== [...(p.proteins || [])].sort().join()) set('proteins', [...prot]);
+  const pickFoods = (key, kind) => { // «prefiero arroz y papa», «odio la avena», «cualquiera»
+    const cur = new Set(p[key] || []); let hit = false;
+    if (/cualquiera|me da igual|como de todo|todo me gusta|todos me gustan/.test(t) && !new RegExp(kind === 'carb' ? 'carbohidrat' : 'grasa').test('')) { if (/cualquier|da igual/.test(t)) { cur.clear(); cur.add('todo'); hit = true; } }
+    t.split(/[.;\n]/).forEach(seg => { const neg = /odio|no (me )?(gusta|como|soporto|tolero|cae)|evito|sin /.test(seg); for (const [id, f] of Object.entries(FOODS)) if (f.kind === kind && FOOD_RX[id]?.test(seg)) { if (neg && cur.has('todo')) { cur.delete('todo'); Object.entries(FOODS).forEach(([i2, f2]) => { if (f2.kind === kind) cur.add(i2); }); } else cur.delete('todo'); if (neg) cur.delete(id); else cur.add(id); hit = true; } });
+    if (hit && [...cur].sort().join() !== [...(p[key] || [])].sort().join()) set(key, [...cur]);
+  };
+  if (/prefiero|me gusta|cualquiera|da igual|tolero|odio|no (me )?(gusta|como|soporto|cae)|evito/.test(t)) { if (p.carbs?.length || /arroz|papa|platano|pasta|avena|pan\b|arepa|banano|carbohidrat|cualquier|da igual/.test(t)) pickFoods('carbs', 'carb'); if (p.fats?.length || /aguacate|mani\b|aceite|grasa|cualquier|da igual/.test(t)) pickFoods('fats', 'fat'); }
+  if (/odio|no soporto|me cae(n)? (mal|pesad)|no me gusta|asco/.test(t) && !changed.has('proteins')) { const old = (p.dislikes || '').trim(), add = String(text).trim().slice(0, 200); if (add && !old.includes(add)) set('dislikes', (old ? old + '; ' : '') + add); }
   const mins = /(\d{1,3})\s*(min|minutos)/.exec(t);
   if (mins) set('cook', +mins[1] <= 15 ? 'rapido' : +mins[1] <= 35 ? 'medio' : 'largo');
   else if (/rapido|poco tiempo|sin tiempo|afan/.test(t)) set('cook', 'rapido');
@@ -237,7 +259,7 @@ const OPT2FOODS = { pollo: ['muslo', 'pechuga'], molida: ['molida'], res: ['res'
 export function proteinPool(prefs = {}) {
   const maxTier = { economico: 1, medio: 2, libre: 3 }[prefs.budget] || 2, veg = (prefs.restrict || []).includes('vegetariano');
   const chosen = (prefs.proteins || []).flatMap(o => OPT2FOODS[o] || []);
-  const exl = prefs.excluded || []; let want = chosen.filter(id => !(veg && MEAT.includes(id)) && !exl.includes(id));
+  const exl = [...(prefs.excluded || []), ...derivedExcluded(prefs)]; let want = chosen.filter(id => !(veg && MEAT.includes(id)) && !exl.includes(id));
   const ok = want.filter(id => FOODS[id].tier <= maxTier), excluded = want.filter(id => FOODS[id].tier > maxTier);
   let pool = [...ok], added = [];
   const cheap = veg ? ['huevo', 'lenteja', 'frijol'] : ['muslo', 'huevo', 'corazon', 'lenteja', 'higado'];
@@ -276,7 +298,7 @@ export function generateMenu(target, prefs = {}, seed = 0, opts = {}) {
   const rs = prefs.restrict || [], noDairy = rs.includes('lacteos') || false, noGluten = rs.includes('gluten'), whey = (prefs.supps || []).includes('whey');
   const eggOK = (prefs.proteins || []).includes('huevo') || !(prefs.proteins || []).length, atunOK = (prefs.proteins || []).includes('atun');
   const fridge = prefs.fridge || 'mixto', cookMax = { rapido: 15, medio: 30, largo: 999 }[prefs.cook] || 999, batch = prefs.style === 'batch';
-  const veg = rs.includes('vegetariano'), ex = prefs.excluded || []; // ex: alimentos que la persona quitó en «Elige tus alimentos»
+  const veg = rs.includes('vegetariano'), ex = [...(prefs.excluded || []), ...derivedExcluded(prefs)]; // ex: alimentos que la persona quitó en «Elige tus alimentos»
   // Pool genérico: sin huevo/hígado/legumbres como proteína principal (cantidades poco realistas); solo si la plantilla lo pide o no hay otra.
   const poolFor = t => { const f = (list) => list.filter(id => (!t.p.only || t.p.only.includes(id)) && !(t.p.not || []).includes(id)); const base = f(pool.filter(id => !['huevo', 'higado', 'lenteja', 'frijol'].includes(id) || (t.p.only || []).includes(id))); return base.length || t.p.only ? base : f(pool); };
   const allow = t => {
@@ -370,7 +392,7 @@ export function budgetFoods(b) {
 }
 /** Todos los alimentos agrupados con su estado. why: 'budget' (fuera de presupuesto), 'diet' (restricción), 'pick' (no elegido aún), '' (disponible). off = no se usará. */
 export function foodChoices(prefs = {}) {
-  const maxTier = { economico: 1, medio: 2, libre: 3 }[prefs.budget] || 2, rs = prefs.restrict || [], ex = prefs.excluded || [], veg = rs.includes('vegetariano'), pool = new Set(proteinPool(prefs).pool);
+  const maxTier = { economico: 1, medio: 2, libre: 3 }[prefs.budget] || 2, rs = prefs.restrict || [], ex = [...(prefs.excluded || []), ...derivedExcluded(prefs)], veg = rs.includes('vegetariano'), pool = new Set(proteinPool(prefs).pool);
   return GROUPS.map(([kind, label]) => ({ kind, label, items: Object.entries(FOODS).filter(([, f]) => f.kind === kind).map(([id, f]) => {
     let why = '';
     if (f.tier > maxTier) why = 'budget';

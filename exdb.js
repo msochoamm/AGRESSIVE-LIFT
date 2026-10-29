@@ -111,7 +111,19 @@ const bySlug = n => BYNAME[slug(n)];
 const HOME_OK = new Set(['mancuerna', 'peso']);
 /** ¿Se puede hacer este ejercicio con lo que tiene la persona? place: 'gimnasio' | 'casa'; equip: lista de claves EQ que prefiere (vacía = todo). */
 export const usable = (e, { place } = {}) => (place === 'casa' ? HOME_OK.has(e.eq) : true);
-const prefScore = (e, equip = []) => (equip.length ? (equip.includes(e.eq) ? 2 : 0) : 0);
+/** Preferencias mecánicas de la persona: equipo prioritario (poleas / mancuernas / barra…) y ángulos favoritos. Se fijan una vez con setMech() y afectan a TODA la selección. */
+let MECH = { prio: '', angles: [] };
+const ANGLE_RX = { inclinado: /inclinad/, plano: /plano|banca|press de pecho/, declinado: /declinad|fondos/, unilateral: /unilateral|mancuerna apoyado|a una mano/, neutro: /martillo|neutro/ };
+export const setMech = (m = {}) => { MECH = { prio: EQ[m.prio] ? m.prio : '', angles: (m.angles || []).filter(a => ANGLE_RX[a]) }; };
+const prefScore = (e, equip = []) => (equip.length ? (equip.includes(e.eq) ? 2 : 0) : 0) + (MECH.prio && e.eq === MECH.prio ? 3 : 0) + (MECH.angles.some(a => ANGLE_RX[a].test(slug(e.n).replace(/-/g, ' '))) ? 2 : 0);
+/** Texto libre («odio la prensa, nada de Smith, sin dominadas») → nombres exactos del catálogo que no se deben programar. */
+export function avoidFromText(text = '') {
+  const out = new Set(), toks = String(text).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/[,;\n.]|\by\b|\bni\b/).map(t => t.replace(/\b(odio|no quiero|nada de|sin|evitar|evito|no me gusta|no me gustan|la|el|las|los|de|en|con|maquina de)\b/g, ' ').trim()).filter(t => t.length >= 4);
+  for (const t of toks) { const sg = slug(t).replace(/-/g, ' ');
+    if (/^smith$/.test(sg)) EXDB.filter(e => e.eq === 'smith').forEach(e => out.add(e.n));
+    else EXDB.forEach(e => { const n = slug(e.n).replace(/-/g, ' '); if (n.includes(sg) || (sg.length > 5 && sg.includes(n))) out.add(e.n); }); }
+  return [...out];
+}
 
 /** Elige n ejercicios de un músculo: 1.º compuesto principal y 2.º complementario/aislamiento, respetando equipo y lugar.
     picks = elecciones guardadas por la persona (ajuste de comodidad) que mandan sobre todo lo demás. */
@@ -122,7 +134,7 @@ export function pickExercises(k, n, { equip = [], place = 'gimnasio', picks = {}
   const out = [];
   for (let i = 0; i < 2; i++) {
     let cand = saved[i] && !avoid.includes(saved[i].n) ? saved[i] : def[i];
-    const wrongEq = !saved[i] && equip.length && !equip.includes(cand.eq);
+    const wrongEq = !saved[i] && ((equip.length && !equip.includes(cand.eq)) || (MECH.prio && cand.eq !== MECH.prio));
     if (!fits(cand) || wrongEq) {
       let pool = EXDB.filter(e => e.k === k && fits(e) && !out.includes(e) && e.role === cand.role);
       if (!pool.length) pool = EXDB.filter(e => e.k === k && fits(e) && !out.includes(e)); // ningún equivalente del mismo tipo: cualquier ejercicio seguro del músculo
