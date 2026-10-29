@@ -184,7 +184,7 @@ const S = {
   style: store.get('style', 'hibrido'), focus: store.get('focus', []),
   profile: store.get('profile', null), target: store.get('target', null), weights: store.get('weights', []),
   adj: store.get('adj', {}), carried: store.get('carried', {}), note: '', preview: null, busy: false,
-  macros: store.get('macros', { d: today(), k: 0, p: 0, c: 0, f: 0 }), meals: store.get('meals', []),
+  macros: store.get('macros', { d: today(), k: 0, p: 0, c: 0, f: 0 }), meals: store.get('meals', []), offLog: store.get('offLog', []), off: null,
   likes: store.get('likes', []), playlist: store.get('playlist', []),
   rest: 0, fresh: '', open: null, devil: {}, swaps: {}, modal: null, setsOpen: false, playing: false, trk: 0,
   coachOpen: true, aiTab: 'coach',
@@ -222,7 +222,7 @@ if (typeof S.rave !== 'object' || !S.rave) S.rave = {};
 if (S.macros.d !== today()) { S.macros = { d: today(), k: 0, p: 0, c: 0, f: 0 }; S.meals = []; store.set('macros', S.macros); store.set('meals', S.meals); }
 const raveOn = () => (S.rave.prUntil || 0) > Date.now();
 const budget = d => (S.target?.kcal || 2200) + (S.adj[d] || 0);
-const nutritionTarget = () => S.target || { kcal: 2200, p: 160, c: 220, f: 70 };
+const nutritionTarget = () => N.styleTarget(S.target || { kcal: 2200, p: 160, c: 220, f: 70 }, S.nutritionPreferences.dietStyle, S.profile?.goal || 'maint', S.weights?.at(-1)?.kg || 0);
 const persist = (...ks) => ks.forEach(k => store.set(k, S[k]));
 const addAdj = (off, k) => { const d = dAdd(off); S.adj[d] = (S.adj[d] || 0) + k; };
 const mesoWeek = () => Math.min(S.meso.weeks, Math.floor((Date.now() - S.meso.start) / 6048e5) + 1);
@@ -660,6 +660,28 @@ const profileCard = () => `<div class="card"><div class="font-bold mb-2">1 · Pe
   <button class="btn fill w-full mt-2" data-act="profile">Calcular mis macros</button></div>`;
 const nOn = (k, v) => { const c = S.nutritionPreferences[k]; return Array.isArray(c) ? c.includes(v) : String(c) === v; };
 const nGroup = q => q.text ? `<div class="nq"><div class="nq-t">${q.q}</div><div class="flex gap-2 mt-1"><input id="n-${q.k}" type="text" maxlength="200" class="flex-1" placeholder="Ej. odio el hígado, la avena me cae pesada" value="${esc(S.nutritionPreferences[q.k] || '')}"><button class="btn ghost" data-act="ntext" data-k="${q.k}">Guardar</button></div></div>` : `<div class="nq"><div class="nq-t">${q.q}${q.multi ? ' <span class="text-zinc-500">(varias)</span>' : ''}</div><div class="quick-prompts !mt-1">${q.opts.map(([v, l]) => `<button class="chip ${nOn(q.k, v) ? 'on' : ''}" data-act="nopt" data-k="${q.k}" data-v="${v}">${l}</button>`).join('')}</div>${q.k === 'budget' ? budgetHint() : ''}</div>`;
+const dietStyleCard = () => { const cur = N.DIET_STYLES[S.nutritionPreferences.dietStyle] ? S.nutritionPreferences.dietStyle : 'balanced', st = N.DIET_STYLES;
+  return `<div class="card"><div class="font-bold">🔥 Estilo de dieta</div><div class="text-xs text-zinc-500 mb-2">Inspirados en rutinas públicas de creadores fitness. Los gramos se escalan a tu peso, calorías y objetivo; no se copian los de ellos.</div>
+  <div class="quick-prompts !mt-1">${Object.entries(st).map(([k, v]) => `<button class="chip ${cur === k ? 'on' : ''}" data-act="nopt" data-k="dietStyle" data-v="${k}">${v.n}</button>`).join('')}</div>
+  <div class="text-sm text-zinc-400 mt-2">${esc(st[cur].d)} <span class="text-zinc-500">Comidas sugeridas: ${st[cur].meals}.</span></div></div>`; };
+const offCard = () => { if (!S.offLog.length) return '';
+  const wk = S.offLog.filter(e => e.d >= dAdd(-6)), kc = wk.reduce((x, e) => x + e.k, 0), pct = Math.round(kc / ((S.target?.kcal || 2200) * 7) * 100);
+  return `<div class="card"><div class="font-bold">🍔 Comidas fuera del plan</div><div class="text-sm text-zinc-400">Últimos 7 días: <b class="text-white">${wk.length}</b> · ${Math.round(kc)} kcal (${pct} % de tu semana) ${pct > 15 ? '⚠️ pasa del ~15 % que suele ser razonable' : '✅ dentro del ~15 % razonable'}</div>
+  ${S.offLog.slice(0, 6).map(e => `<div class="ctl-row">${e.img ? `<img src="${e.img}" alt="" style="width:44px;height:44px;border-radius:10px;object-fit:cover;flex:none">` : ''}<div class="min-w-0"><div class="truncate">${esc(e.text)}</div><div class="text-xs text-zinc-500">${e.d.slice(5)} · ${Math.round(e.k)} kcal · ${e.v === 'ia' ? '📷🤖 validada con foto + IA' : e.v === 'foto' ? '📷 con foto' : '✍️ sin foto (sin validar)'}</div></div></div>`).join('')}</div>`; };
+function offSync() { const o = S.off; if (!o) return; const t = $('#off-t'), k = $('#off-k'); if (t) o.text = t.value.trim().slice(0, 60); if (k) o.k = k.value.trim(); }
+async function offPhoto(file) {
+  const o = S.off; if (!file || !o) return; offSync();
+  S.busy = true; S.busyMsg = 'Procesando foto…'; o.msg = ''; render();
+  try {
+    const img = await shrinkImage(file, 1280); o.img = img.thumb; o.v = 'foto'; o.ai = null; o.useAi = false;
+    if (hasAiKey() && !S.offlineMode) {
+      S.busyMsg = 'Validando con IA…'; render();
+      const r = await aiVision('food', img.full, [N.offItem(o.id)?.n, o.text].filter(Boolean).join(' — ')), pv = photoPreview(r, img.thumb);
+      o.ai = { ...pv.items.reduce((x, i) => ({ k: x.k + i.k, p: x.p + i.p, c: x.c + i.c, f: x.f + i.f }), { k: 0, p: 0, c: 0, f: 0 }), names: pv.items.map(i => i.name).join(', ').slice(0, 120) }; o.v = 'ia';
+    }
+  } catch (e) { o.msg = '📷 ' + (e.message || 'No pude analizar la foto.') + (o.img ? ' La foto quedó guardada como evidencia.' : ''); }
+  S.busy = false; S.busyMsg = ''; render();
+}
 const nutritionCoachCard = () => {
   const miss = N.missing(S.nutritionPreferences, !!S.target), ok = !miss.length;
   return `<div class="card on"><div class="text-xs text-zinc-500 uppercase tracking">${ok ? 'Perfil completo' : 'Entrevista nutricional · obligatoria'}</div>
@@ -694,9 +716,9 @@ const nutritionCoachCard = () => {
     </details>`).join('')}
   </details>` : ''}
 </div>
-<div class="card"><div class="font-bold mb-1">${S.target ? '' : '2 · '}Respuestas rápidas</div><div class="text-xs text-zinc-500 mb-2">Toca para responder sin escribir. Todo lo marcado alimenta tu menú.</div>
+${dietStyleCard()}<div class="card"><div class="font-bold mb-1">${S.target ? '' : '2 · '}Respuestas rápidas</div><div class="text-xs text-zinc-500 mb-2">Toca para responder sin escribir. Todo lo marcado alimenta tu menú.</div>
   ${N.QUESTIONS.filter(q => q.req).map(nGroup).join('')}
-  <details class="mt-2" ${N.QUESTIONS.filter(q => !q.req).some(q => (S.nutritionPreferences[q.k] || []).length) ? 'open' : ''}><summary class="text-sm text-zinc-400" style="min-height:40px;display:flex;align-items:center">Afinar más (alimentos que odias, restricciones, suplementos, obstáculos)</summary>${N.QUESTIONS.filter(q => !q.req).map(nGroup).join('')}</details></div>
+  <details class="mt-2" ${N.QUESTIONS.filter(q => !q.req && q.k !== 'dietStyle').some(q => (S.nutritionPreferences[q.k] || []).length) ? 'open' : ''}><summary class="text-sm text-zinc-400" style="min-height:40px;display:flex;align-items:center">Afinar más (alimentos que odias, restricciones, suplementos, obstáculos)</summary>${N.QUESTIONS.filter(q => !q.req && q.k !== 'dietStyle').map(nGroup).join('')}</details></div>
 ${ok && S.foodsOk ? `<div class="card"><div class="flex justify-between items-center gap-2"><div class="text-sm"><b>🥗 Tus alimentos</b><div class="text-xs text-zinc-400">Quita o activa proteínas, carbohidratos y verduras del menú.</div></div><button class="chip on !px-3 flex-none" data-act="foodsopen">Editar</button></div></div>` : ''}
 <button class="btn fill w-full" data-act="nutriplan" ${ok ? '' : 'disabled'}>${ok ? (S.foodsOk ? 'Ver mi plan nutricional →' : '🥗 Revisar mis alimentos y generar plan →') : `Faltan ${miss.length} dato${miss.length > 1 ? 's' : ''} para abrir tu plan`}</button>`;
 };
@@ -722,8 +744,8 @@ function batchOf(iso) {
   const end = shiftIsoDate(e, -1); return { start: s0, end, n: dayNo(end) - dayNo(s0) + 1 };
 }
 const BM = {};
-const batchMenu = b => { const key = [b.start, b.n, S.menuSeed || 0, S.target?.kcal, JSON.stringify(S.nutritionPreferences)].join('|');
-  return BM[key] ||= N.generateMenu(nutritionTarget(), S.nutritionPreferences, weekSeed(mondayOf(b.start)) + (dayNo(b.start) % 97), { count: b.n, blockOf: () => 0 }); };
+const batchMenu = b => { const key = [b.start, b.n, S.menuSeed || 0, S.target?.kcal, S.profile?.goal || '', JSON.stringify(S.nutritionPreferences)].join('|');
+  return BM[key] ||= N.generateMenu(nutritionTarget(), S.nutritionPreferences, weekSeed(mondayOf(b.start)) + (dayNo(b.start) % 97), { count: b.n, blockOf: () => 0, goal: S.profile?.goal || 'maint', kg: S.weights?.at(-1)?.kg || 0 }); };
 const menuForDate = iso => { const b = batchOf(iso), mm = batchMenu(b), idx = dayNo(iso) - dayNo(b.start); return { b, idx, mm, meals: mm.days[idx] || [] }; };
 const currentMenu = (off = 0) => { const mon = menuMonday(off), days = [], notes = new Set(), prep = new Set();
   for (let i = 0; i < 7; i++) { const f = menuForDate(shiftIsoDate(mon, i)); days.push(f.meals); f.mm.notes.forEach(n => notes.add(n)); f.mm.prep.forEach(x => prep.add(x)); }
@@ -814,7 +836,7 @@ const planCards = () => {
     <div class="weeknav"><button class="icon-btn" data-act="menuweek" data-n="-1" ${wk <= 0 ? 'disabled' : ''}>‹</button><div class="text-center"><b>${wk === 0 ? 'Esta semana' : wk === 1 ? 'Próxima semana' : `En ${wk} semanas`}</b><div class="text-xs text-zinc-500">${shortDate(menuMonday(wk))} - ${shortDate(shiftIsoDate(menuMonday(wk), 6))} · cambia solo cada lunes</div></div><button class="icon-btn" data-act="menuweek" data-n="1" ${wk >= 3 ? 'disabled' : ''}>›</button></div>
     <div class="daytabs">${DN.map((d, i) => `<button class="chip ${day === i ? 'on' : ''}" data-act="menuday" data-i="${i}">${d}</button>`).join('')}</div>
     ${(() => { const iso = shiftIsoDate(menuMonday(wk), day), f = menuForDate(iso); return `<div class="text-xs text-zinc-400 mb-1">${f.idx === 0 ? `🍳 <b class="neon">Día de cocina</b>: cocinas para ${f.b.n} días (hasta el ${shortDate(f.b.end)})` : `🥡 Comes lo cocinado el ${shortDate(f.b.start)}`}${isTrain(iso) ? ' · 💪 entrenas' : hasTrainPlan() ? ' · 😴 descanso' : ''}</div>`; })()}
-    ${meals.map((m, i) => `<div class="meal"><div class="flex justify-between items-start gap-2"><div class="min-w-0"><div class="text-xs neon uppercase">${m.slot}${m.time ? ` · 🕗 ${fmtHour(m.time)}` : ''}</div><div class="font-bold leading-tight">${esc(m.name)}</div></div><span class="mealtag">${(PREP[m.prep] || PREP.cocinar)(m.mins)}</span></div>
+    ${meals.map((m, i) => `<div class="meal"><div class="flex justify-between items-start gap-2"><div class="min-w-0"><div class="text-xs neon uppercase">${m.slot}${m.time ? ` · 🕗 ${fmtHour(m.time)}` : ''}</div><div class="font-bold leading-tight">${esc(m.name)}</div>${m.flavor ? `<div class="text-xs text-zinc-500">✨ Toque: ${esc(m.flavor)}</div>` : ''}</div><span class="mealtag">${(PREP[m.prep] || PREP.cocinar)(m.mins)}</span></div>
       <div class="text-sm text-zinc-400 mt-1">${m.items.map(it => esc(it.text)).join(' · ')}</div>
       ${(m.steps || []).length ? `<details class="mt-1"><summary class="text-sm neon" style="min-height:36px;display:flex;align-items:center">📖 Ver preparación</summary><ol class="strat" style="list-style:decimal;padding-left:18px">${m.steps.map(x => `<li>${esc(x)}</li>`).join('')}</ol></details>` : ''}
       <div class="flex justify-between items-center mt-1"><span class="text-xs text-zinc-500">${m.k} kcal · P ${m.p} · C ${m.c} · G ${m.f}</span><button class="chip !px-3" data-act="mealadd" data-d="${day}" data-i="${i}">＋ Registrar</button></div></div>`).join('') || '<div class="text-sm text-zinc-500">No pude armar el menú con esas restricciones: amplía las proteínas o el tiempo.</div>'}
@@ -1012,7 +1034,7 @@ const foodView = () => {
   ${goalSelect(false)}<div class="text-xs text-zinc-500 mt-1">🔒 Al calcular, el tipo de dieta queda fijo: definición 10 semanas · volumen 12 · mantenimiento 8.</div>
   <button class="btn fill w-full mt-2" data-act="profile">Calcular objetivos</button></div>` : '';
   if (!S.target) return `${tabs}${profileSetup}<div class="card text-sm text-zinc-400">Configura tus macros para abrir el plan. Tus hábitos y preferencias ya se guardaron desde el chat.</div>`;
-  const b = budget(today()), sc = E.scale(S.target, b), m = S.macros, pv = S.preview;
+  const b = budget(today()), sc = E.scale(nutritionTarget(), b), m = S.macros, pv = S.preview;
   return `
 ${tabs}
 ${profileSetup}
@@ -1025,12 +1047,14 @@ ${planCards()}
   <input id="meal" placeholder="${(LOCAL_MODE && !AI_ON) ? 'Ej: arroz y pollo 650 kcal 45p 70c 15g' : 'Ej: corrientazo con pollo, arroz y plátano, jugo de mora'}">
   <button class="btn fill w-full mt-2" data-act="analyze" ${S.busy ? 'disabled' : ''}>${S.busy ? (S.busyMsg || 'Analizando…') : ((LOCAL_MODE && !AI_ON) ? 'Registrar comida' : 'Analizar con IA')}</button>
   <div class="grid grid-cols-2 gap-2 mt-2"><button class="btn" data-act="photofood" ${S.busy ? 'disabled' : ''}>📷 Foto del plato</button><button class="btn" data-act="photolabel" ${S.busy ? 'disabled' : ''}>🏷️ Tabla nutricional</button></div>
+  <button class="btn w-full mt-2" data-act="offopen">🍔 Comida fuera del plan (antojo / restaurante)</button>
   <div class="text-xs text-zinc-500 mt-1">Toma o sube una foto. Si escribes arriba un detalle (ej. «pechuga 200 g»), la IA lo usa para afinar. La tabla nutricional es lo más exacto; el plato es una estimación que puedes corregir antes de registrar.</div>
   <input type="file" id="ph-food" accept="image/*" style="display:none"><input type="file" id="ph-label" accept="image/*" style="display:none">
   ${S.msg ? `<p class="text-sm text-red-400 mt-2">${esc(S.msg)}</p>` : ''}
   ${quickMeals()}
   ${pv ? previewCard(pv) : ''}
-  ${S.meals.length ? '<div class="text-xs text-zinc-500 mt-3 mb-1">Comidas registradas hoy</div>' : ''}${S.meals.map((x, i) => `<div class="ctl-row"><div class="min-w-0"><div class="truncate">${esc(x.text)}</div><div class="text-xs text-zinc-500">${Math.round(x.k)} kcal · P${Math.round(x.p)} C${Math.round(x.c)} G${Math.round(x.f)}</div></div><button class="icon-btn" data-act="delmeal" data-i="${i}" aria-label="Eliminar comida" title="Eliminar">🗑</button></div>`).join('')}</div>
+  ${S.meals.length ? '<div class="text-xs text-zinc-500 mt-3 mb-1">Comidas registradas hoy</div>' : ''}${S.meals.map((x, i) => `<div class="ctl-row"><div class="min-w-0"><div class="truncate">${x.off ? '🍔 ' : ''}${esc(x.text)}</div><div class="text-xs text-zinc-500">${Math.round(x.k)} kcal · P${Math.round(x.p)} C${Math.round(x.c)} G${Math.round(x.f)}${x.off ? ' · fuera del plan' : ''}</div></div><button class="icon-btn" data-act="delmeal" data-i="${i}" aria-label="Eliminar comida" title="Eliminar">🗑</button></div>`).join('')}</div>
+${offCard()}
 <div class="card"><div class="font-bold mb-2">Auditoría de peso</div>
   <div class="flex gap-2"><input id="wt" type="number" inputmode="decimal" placeholder="Peso hoy (kg)"><button class="btn" data-act="weight">Registrar</button></div>
   ${spark(S.weights.map(w => w.kg).slice(-12))}<div class="text-xs text-zinc-500 mt-2">Meta ${S.target.kcal} kcal · P ${S.target.p} C ${S.target.c} G ${S.target.f} (base semanal)</div></div>
@@ -1388,6 +1412,22 @@ const sheet = () => {
     ${warn.length ? `<div class="card connbar bad mt-3 text-sm">⚠️ Con estas selecciones no pude armar: <b>${warn.join(', ')}</b>. Reactiva algún carbohidrato, lácteo o proteína.</div>` : ''}
     <button class="btn fill w-full mt-3" data-act="foodsgo" ${warn.length ? 'disabled' : ''}>${S.foodsOk ? '✅ Guardar cambios' : '⚡ Generar mi plan'}</button>
     <button class="btn ghost w-full mt-2" data-act="closemodal">Cancelar</button></div></div>`; }
+  if (m.type === 'offplan') { const o = S.off || {}, it = N.offItem(o.id), q = o.qty || 1, lib = it ? { k: it.k * q } : null, ai = o.ai, diff = lib && ai ? Math.round((ai.k - lib.k) / lib.k * 100) : null;
+    return `<div class="sheet"><div style="max-height:92vh;overflow:auto">
+    <div class="text-xs text-zinc-500 uppercase tracking">Fuera del plan</div><div class="font-bold text-xl neon">🍔 Comida fuera de la dieta</div>
+    <div class="text-sm text-zinc-300 mt-1">Cuenta en tus calorías de hoy y el plan se ajusta los próximos días. Con una foto queda validada.</div>
+    <div class="chips mt-2">${N.OFFLIB.map(([id, ic, n]) => `<button class="chip ${o.id === id ? 'on' : ''}" data-act="offsel" data-id="${id}">${ic} ${esc(n)}</button>`).join('')}<button class="chip ${o.id === 'otro' ? 'on' : ''}" data-act="offsel" data-id="otro">✍️ Otra</button></div>
+    ${it ? `<div class="text-xs text-zinc-400 mt-2">Referencia: 1 ${esc(it.unit)} ≈ ${it.k} kcal · P ${it.p} C ${it.c} G ${it.f} (aproximado; corrige abajo si lo sabes)</div>` : ''}
+    <div class="grid2 mt-2"><label class="pvl">Cantidad<div class="step"><button data-act="offstep" data-s="-0.5" aria-label="menos">−</button><span class="px-3 font-bold">${q}</span><button data-act="offstep" data-s="0.5" aria-label="más">＋</button></div></label>
+    <label class="pvl">kcal totales (opcional)<input id="off-k" type="text" inputmode="decimal" placeholder="${lib ? Math.round(lib.k) : 'ej. 700'}" value="${esc(o.k || '')}"></label></div>
+    <input id="off-t" class="mt-2" type="text" maxlength="60" placeholder="¿Qué era? ej. hamburguesa doble con tocineta" value="${esc(o.text || '')}">
+    <button class="btn w-full mt-2" data-act="offphoto" ${S.busy ? 'disabled' : ''}>${S.busy ? (S.busyMsg || 'Analizando…') : o.img ? '📷 Cambiar foto' : '📷 Foto del plato (para validar)'}</button>
+    <input type="file" id="ph-off" accept="image/*" style="display:none">
+    ${o.img ? `<img class="pvimg mt-2" src="${o.img}" alt="Foto de la comida">` : ''}
+    ${ai ? `<div class="card on mt-2 text-sm"><div>🤖 La IA ve: <b>${esc(ai.names)}</b></div><div class="text-zinc-400">Estimación: ${totTxt(ai)}${diff != null ? ` · ${Math.abs(diff) <= 25 ? '✅ coincide con lo que elegiste' : '⚠️ difiere ' + (diff > 0 ? '+' : '') + diff + ' % de lo que elegiste'}` : ''}</div>${o.useAi ? '<div class="text-xs neon mt-1">Se registrará la estimación de la IA.</div>' : '<button class="btn ghost w-full mt-2" data-act="offuse">Usar la estimación de la IA</button>'}</div>` : ''}
+    ${o.msg ? `<p class="text-sm text-red-400 mt-2">${esc(o.msg)}</p>` : ''}
+    <div class="text-xs text-zinc-500 mt-2">${o.img ? (ai ? 'Validada con foto + IA.' : 'La foto queda guardada como evidencia.') : 'Sin foto se guarda como «sin validar».'}</div>
+    <button class="btn fill w-full mt-3" data-act="offconfirm" ${S.busy ? 'disabled' : ''}>Registrar comida</button><button class="btn ghost w-full mt-2" data-act="closemodal">Cancelar</button></div></div>`; }
   if (m.type === 'titan') return titanSheet();
   if (m.type === 'review') return `<div class="sheet"><div style="max-height:90vh;overflow:auto"><div class="font-bold text-lg">🔎 Revisión de tu rutina</div>
     <div class="text-sm text-zinc-300 mt-2" style="white-space:pre-wrap">${esc(m.r.text)}</div>
@@ -1775,9 +1815,26 @@ const ACT = {
   closemodal() { if (S.modal?.type === 'titan') store.set('titanSeen', today()); S.modal = null; },
   acr(d) { if (GLOSSARY[d.k]) S.modal = { type: 'acr', k: d.k }; },
   dellast(d) { const l = S.logs[d.id]; if (l?.length && confirm('¿Borrar la última serie de este ejercicio?')) { l.pop(); store.set('logs', S.logs); } },
+  offopen() { S.off = { id: null, qty: 1, text: '', k: '', img: null, ai: null, useAi: false, v: 'manual', msg: '' }; S.modal = { type: 'offplan' }; },
+  offsel(d) { offSync(); if (S.off) { S.off.id = d.id; S.off.msg = ''; } },
+  offstep(d) { offSync(); if (S.off) S.off.qty = Math.max(0.5, +((S.off.qty || 1) + +d.s).toFixed(1)); },
+  offphoto() { offSync(); $('#ph-off')?.click(); },
+  offuse() { offSync(); if (S.off?.ai) S.off.useAi = true; },
+  offconfirm() { const o = S.off; if (!o) return; offSync(); const it = N.offItem(o.id), q = o.qty || 1;
+    let t = it ? { k: it.k * q, p: it.p * q, c: it.c * q, f: it.f * q } : { k: 0, p: 0, c: 0, f: 0 };
+    if (o.useAi && o.ai) t = { k: o.ai.k, p: o.ai.p, c: o.ai.c, f: o.ai.f };
+    const kv = parseFloat(String(o.k).replace(',', '.'));
+    if (kv > 0) { const r = t.k > 0 ? kv / t.k : 0; t = r ? { k: kv, p: t.p * r, c: t.c * r, f: t.f * r } : { k: kv, p: 0, c: 0, f: 0 }; }
+    if (!(t.k > 0)) { o.msg = 'Elige qué comiste o escribe las kcal.'; return; }
+    for (const k of ['k', 'p', 'c', 'f']) t[k] = Math.round(t[k]);
+    const text = `${it ? it.ic : '🍽️'} ${o.text || it?.n || 'Comida fuera del plan'}${q !== 1 && it ? ` ×${q}` : ''}`.slice(0, 70), uid = Date.now(), xb = totalXp();
+    addMeal([t], text, { off: true, uid });
+    S.offLog = [{ uid, d: today(), text, ...t, img: o.img, v: o.v }, ...S.offLog].slice(0, 30); store.set('offLog', S.offLog);
+    S.off = null; S.modal = null; syncHist(); xpToast(xb); toast(`🍔 Registrado: ${t.k} kcal fuera del plan`); },
   delmeal(d) { const i = +d.i, x = S.meals[i]; if (!x) return;
     if (!confirm(`¿Eliminar «${x.text}» (${Math.round(x.k)} kcal)?\n\nSe restará de tus calorías y macros de hoy.`)) return;
     for (const k of ['k', 'p', 'c', 'f']) S.macros[k] = Math.max(0, S.macros[k] - (x[k] || 0)); S.meals.splice(i, 1);
+    if (x.uid) { S.offLog = S.offLog.filter(e => e.uid !== x.uid); store.set('offLog', S.offLog); }
     const done = S.carried[today()] || 0; // si esa comida había recortado los días siguientes, se devuelve el recorte
     if (done > 0) { const now = Math.min(600, Math.max(0, S.macros.k - budget(today()))); let diff = done - now, back = 0;
       for (let n = 3; n >= 1 && diff > 0; n--) { const b = Math.min(200, diff, -(S.adj[dAdd(n)] || 0)); if (b > 0) { addAdj(n, b); diff -= b; back += b; } }
@@ -2014,11 +2071,11 @@ const ACT = {
   weeks() { S.meso.weeks = S.meso.weeks === 8 ? 6 : 8; store.set('meso', S.meso); },
   newmeso() { if (confirm('¿Reiniciar mesociclo?')) { S.meso.start = Date.now(); store.set('meso', S.meso); } },
 };
-function addMeal(items, text) {
+function addMeal(items, text, extra = {}) {
   const t = { k: 0, p: 0, c: 0, f: 0 };
   items.forEach(i => { for (const k in t) t[k] += Math.max(0, +i[k] || 0); });
   for (const k in t) S.macros[k] += Math.round(t[k]);
-  S.meals.push({ text, ...t });
+  S.meals.push({ text, ...t, ...extra });
   S.recentMeals = [{ text, k: Math.round(t.k), p: Math.round(t.p), c: Math.round(t.c), f: Math.round(t.f) }, ...S.recentMeals.filter(m => m.text !== text)].slice(0, 3);
   // Si te pasas del presupuesto, el exceso se reparte (≤200 kcal/día, 3 días) para mantener déficit/superávit.
   const done = S.carried[today()] || 0, over = S.macros.k - budget(today()) - done;
@@ -2535,6 +2592,7 @@ document.addEventListener('click', async e => {
   if (S.screen === 'app' || S.screen === 'aiconnect') render();
 });
 document.addEventListener('change', async e => { const t = e.target;
+  if (t?.id === 'ph-off') { const f = t.files?.[0]; t.value = ''; return offPhoto(f); }
   if (t?.id === 'ph-food' || t?.id === 'ph-label') { const f = t.files?.[0]; t.value = ''; return analyzePhoto(t.id === 'ph-label' ? 'label' : 'food', f); }
   if (t?.dataset?.shop) return shopSave(t);
   if (e.target?.id !== 'bk-file') return; const f = e.target.files?.[0]; if (!f) return;

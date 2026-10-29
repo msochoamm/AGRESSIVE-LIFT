@@ -77,6 +77,9 @@ export const FOODS = {
   aguacate: { n: 'Aguacate', s: 'aguacate', k: 160, p: 2, c: 9, f: 15, tier: 1, raw: 1, kind: 'fat', cap: 80 },
   mani: { n: 'Maní', s: 'maní', k: 567, p: 26, c: 16, f: 49, tier: 1, raw: 1, kind: 'fat', cap: 20 },
   aceite: { n: 'Aceite de oliva/vegetal', s: 'aceite', k: 884, p: 0, c: 0, f: 100, tier: 1, raw: 1, kind: 'fat', cap: 15 },
+  requeson: { n: 'Requesón / cottage', s: 'requesón', k: 98, p: 11, c: 3.4, f: 4.3, tier: 2, raw: 1, kind: 'dairy' },
+  camote: { n: 'Batata cocida', s: 'batata', k: 90, p: 2, c: 21, f: 0.1, tier: 1, raw: 1.1, kind: 'carb' },
+  yuca: { n: 'Yuca cocida', s: 'yuca', k: 160, p: 1.4, c: 38, f: 0.3, tier: 1, raw: 1.1, kind: 'carb' },
 };
 const MEAT = ['muslo', 'pechuga', 'molida', 'res', 'cerdo', 'pescado', 'atun', 'higado', 'corazon'];
 
@@ -87,16 +90,17 @@ export const QUESTIONS = [
   { k: 'cook', req: true, q: '¿Cuánto tiempo tienes para cocinar por comida?', opts: [['rapido', '⚡ ≤ 15 min'], ['medio', '⏱ ~30 min'], ['largo', '👨‍🍳 Sin prisa']] },
   { k: 'fridge', req: true, q: '¿Desayunos y cenas listos en la nevera?', opts: [['si', '🧊 Sí, preparar y recalentar'], ['mixto', '🔀 Mixto'], ['no', '🍳 Cocino al momento']] },
   { k: 'style', req: true, q: '¿Cómo prefieres organizarte?', opts: [['batch', 'Batch Cooking'], ['hibrido', 'Híbrido'], ['dia', 'Cocina al Día'], ['libres', 'Macros Libres']] },
-  { k: 'carbs', req: true, multi: true, q: '¿Qué carbohidratos prefieres o toleras mejor? (el resto no entra en tu menú)', opts: [['todo', '✅ Cualquiera'], ['arroz', 'Arroz'], ['papa', 'Papa'], ['platano', 'Plátano'], ['pasta', 'Pasta'], ['avena', 'Avena'], ['pan', 'Pan'], ['arepa', 'Arepa'], ['banano', 'Banano']] },
+  { k: 'carbs', req: true, multi: true, q: '¿Qué carbohidratos prefieres o toleras mejor? (el resto no entra en tu menú)', opts: [['todo', '✅ Cualquiera'], ['arroz', 'Arroz'], ['papa', 'Papa'], ['platano', 'Plátano'], ['pasta', 'Pasta'], ['avena', 'Avena'], ['pan', 'Pan'], ['arepa', 'Arepa'], ['banano', 'Banano'], ['camote', 'Batata'], ['yuca', 'Yuca']] },
   { k: 'fats', req: true, multi: true, q: '¿Qué grasas prefieres o toleras mejor?', opts: [['todo', '✅ Cualquiera'], ['aguacate', 'Aguacate'], ['mani', 'Maní'], ['aceite', 'Aceite de oliva']] },
   { k: 'dislikes', q: 'Escribe los alimentos que ODIAS o te caen mal (opcional; ej. «odio el hígado y la avena, el pescado me cae pesado»)', text: true },
-  { k: 'meals', req: true, q: '¿Cuántas comidas al día?', opts: [['3', '3'], ['4', '4'], ['5', '5']] },
+  { k: 'meals', req: true, q: '¿Cuántas comidas al día?', opts: [['3', '3'], ['4', '4'], ['5', '5'], ['6', '6']] },
   { k: 'restrict', q: 'Restricciones (opcional)', multi: true, opts: [['ninguna', 'Ninguna'], ['lacteos', 'Sin lácteos'], ['gluten', 'Sin gluten'], ['vegetariano', 'Vegetariano']] },
+  { k: 'dietStyle', q: '¿Qué estilo de dieta quieres seguir?', opts: [['balanced', '⚖️ Equilibrado'], ['classic', '🏆 Classic'], ['protein', '💪 Alto en proteína'], ['farm', '🌾 Granja y fuerza'], ['flex', '🎲 Flexible']] },
   { k: 'eatsout', q: '¿Comes corrientazo / en la calle? (opcional)', opts: [['si', 'Sí, seguido'], ['no', 'Casi nunca']] },
   { k: 'supps', q: 'Suplementos (opcional)', multi: true, opts: [['whey', 'Whey'], ['creatina', 'Creatina'], ['ninguno', 'Ninguno']] },
   { k: 'barriers', q: '¿Qué te hace fallar en la dieta? (opcional)', multi: true, opts: [['antojos', 'Antojos'], ['tiempo', 'Falta de tiempo'], ['fuera', 'Comer fuera'], ['cocinar', 'No sé cocinar'], ['dinero', 'Presupuesto'], ['hambre', 'Mucha hambre']] },
 ];
-export const LABELS = { budget: 'presupuesto', proteins: 'proteínas', cook: 'tiempo de cocina', fridge: 'nevera', style: 'estilo', meals: 'comidas al día', carbs: 'carbohidratos', fats: 'grasas', dislikes: 'alimentos que no te gustan', restrict: 'restricciones', eatsout: 'comida en la calle', supps: 'suplementos', barriers: 'obstáculos' };
+export const LABELS = { budget: 'presupuesto', proteins: 'proteínas', cook: 'tiempo de cocina', fridge: 'nevera', style: 'estilo', meals: 'comidas al día', dietStyle: 'estilo de dieta', carbs: 'carbohidratos', fats: 'grasas', dislikes: 'alimentos que no te gustan', restrict: 'restricciones', eatsout: 'comida en la calle', supps: 'suplementos', barriers: 'obstáculos' };
 export const STEPS = [['profile', 'Perfil y objetivo'], ['budget', 'Presupuesto'], ['proteins', 'Proteínas'], ['cook', 'Tiempo'], ['fridge', 'Nevera'], ['style', 'Estilo'], ['carbs', 'Carbohidratos'], ['fats', 'Grasas'], ['meals', 'Comidas']];
 
 const has = (v) => (Array.isArray(v) ? v.length > 0 : v !== undefined && v !== null && v !== '');
@@ -118,7 +122,7 @@ const ASK = {
   style: '¿Cómo prefieres organizarte: batch cooking, híbrido, cocinar al día o macros libres?',
   carbs: '¿Qué carbohidratos prefieres o toleras mejor (arroz, papa, plátano, pasta, avena, pan, arepa, banano)? Dime también cuáles odias; si te da igual, escribe «cualquiera».',
   fats: '¿Qué grasas prefieres o toleras mejor (aguacate, maní, aceite de oliva)? Dime cuáles no soportas, o escribe «cualquiera».',
-  meals: '¿Cuántas comidas haces al día: 3, 4 o 5?',
+  meals: '¿Cuántas comidas haces al día: de 3 a 6?',
 };
 export const askFor = k => ASK[k] || '';
 
@@ -130,7 +134,7 @@ export function greeting(prefs, hasTarget) {
 /* ---------- Interpretación de texto libre ---------- */
 const norm = t => String(t || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 const PROT_RX = { pollo: /pollo|pechuga|muslo/, molida: /molida/, res: /\bres\b|carne de res|bistec|sobrebarriga|churrasco|lomo de res/, cerdo: /cerdo|chuleta|costilla/, pescado: /pescado|tilapia|trucha|salmon|mojarra/, atun: /atun/, huevo: /huevo/, visceras: /higado|corazon|viscera|menudencia/, legumbres: /lenteja|frijol|garbanzo/ };
-const FOOD_RX = { muslo: /muslo/, pechuga: /pechuga/, molida: /molida/, res: /\bres\b|bistec|lomo de res/, cerdo: /cerdo/, pescado: /pescado|tilapia/, atun: /atun/, huevo: /huevo/, higado: /higado/, corazon: /corazon/, lenteja: /lenteja/, frijol: /frijol/, whey: /whey/, yogur: /yogur/, leche: /leche/, arroz: /arroz/, papa: /\bpapa/, platano: /platano/, pasta: /pasta|espagueti/, avena: /avena/, pan: /\bpan\b/, arepa: /arepa/, banano: /banano/, zuquini: /zuquini|calabacin/, aguacate: /aguacate/, mani: /\bmani\b|cacahuate/, aceite: /aceite/ };
+const FOOD_RX = { muslo: /muslo/, pechuga: /pechuga/, molida: /molida/, res: /\bres\b|bistec|lomo de res/, cerdo: /cerdo/, pescado: /pescado|tilapia/, atun: /atun/, huevo: /huevo/, higado: /higado/, corazon: /corazon/, lenteja: /lenteja/, frijol: /frijol/, whey: /whey/, yogur: /yogur/, leche: /leche/, arroz: /arroz/, papa: /\bpapa/, platano: /platano/, pasta: /pasta|espagueti/, avena: /avena/, pan: /\bpan\b/, arepa: /arepa/, banano: /banano/, zuquini: /zuquini|calabacin/, aguacate: /aguacate/, mani: /\bmani\b|cacahuate/, aceite: /aceite/, requeson: /requeson|cottage/, camote: /camote|batata/, yuca: /yuca/ };
 const POLLO_RX = /\bpollo\b/;
 /** Alimentos que NO se usarán por gusto: lo que la persona odia (texto libre) + los carbohidratos/grasas que no eligió. */
 export function derivedExcluded(prefs = {}) {
@@ -170,7 +174,7 @@ export function parse(text, prefs = {}) {
   else if (/cocina al dia|cocino.*diario|cada dia/.test(t)) set('style', 'dia');
   else if (/hibrid/.test(t)) set('style', 'hibrido');
   else if (/macros? libres|contar macros|flexible/.test(t)) set('style', 'libres');
-  const meals = /\b([3-5])\s*comidas/.exec(t); if (meals) set('meals', +meals[1]);
+  const meals = /\b([3-6])\s*comidas/.exec(t); if (meals) set('meals', +meals[1]);
   const rs = new Set(p.restrict || []);
   if (/vegetarian/.test(t)) rs.add('vegetariano'); if (/sin lacteos|intoleran\w* a la lactosa|no (tomo|consumo) leche/.test(t)) rs.add('lacteos');
   if (/celiac|sin gluten/.test(t)) rs.add('gluten'); if (/ninguna restriccion|como de todo|no tengo alergias/.test(t)) { rs.clear(); rs.add('ninguna'); }
@@ -219,6 +223,34 @@ const TPL = [
   { id: 's-huevos', slot: 'snack', name: 'Huevos duros con fruta', prep: 'nevera', mins: 2, p: { food: 'huevo' }, c: 'banano', fixed: [], fat: 'mani', tags: ['egg'] },
   { id: 's-atun', slot: 'snack', name: 'Atún con arepa', prep: 'rapido', mins: 3, p: { food: 'atun' }, c: 'arepa', fixed: [], fat: 'mani', tags: [], needs: 'atun' },
   { id: 's-sandwich', slot: 'snack', name: 'Sándwich de {P} desmechado', prep: 'nevera', mins: 3, p: { pool: true, only: ['muslo', 'pechuga', 'atun', 'res', 'cerdo'] }, c: 'pan', fixed: [], fat: 'mani', tags: ['gluten'] },
+  // v34: más variedad (desayunos, almuerzos, cenas y snacks) para no aburrirse
+  { id: 'd-pericos', slot: 'desayuno', name: 'Huevos pericos con arepa y fruta', prep: 'cocinar', mins: 10, p: { food: 'huevo' }, c: 'arepa', fixed: [['verduras', 60], ['banano', 100]], fat: 'aceite', tags: ['egg'] },
+  { id: 'd-pancakes', slot: 'desayuno', name: 'Pancakes de avena y whey con banano', prep: 'cocinar', mins: 12, p: { food: 'whey' }, c: 'avena', fixed: [['banano', 100], ['huevo', 50]], fat: 'mani', tags: ['whey', 'dairy', 'egg'] },
+  { id: 'd-requeson', slot: 'desayuno', name: 'Requesón con avena, banano y maní', prep: 'nevera', mins: 3, p: { food: 'requeson' }, c: 'avena', fixed: [['banano', 100]], fat: 'mani', tags: ['dairy'] },
+  { id: 'd-omelette', slot: 'desayuno', name: 'Omelette de verduras con pan integral', prep: 'cocinar', mins: 10, p: { food: 'huevo' }, c: 'pan', fixed: [['verduras', 80]], fat: 'aceite', tags: ['egg', 'gluten'] },
+  { id: 'd-papa-huevo', slot: 'desayuno', name: 'Papa salteada con huevo revuelto', prep: 'cocinar', mins: 12, p: { food: 'huevo' }, c: 'papa', fixed: [['verduras', 60]], fat: 'aceite', tags: ['egg'] },
+  { id: 'd-camote', slot: 'desayuno', name: 'Batata con huevos y aguacate', prep: 'cocinar', mins: 12, p: { food: 'huevo' }, c: 'camote', fixed: [['aguacate', 40]], tags: ['egg'] },
+  { id: 'd-avena-cocida', slot: 'desayuno', name: 'Avena cocida con whey, banano y maní', prep: 'cocinar', mins: 6, p: { food: 'whey' }, c: 'avena', fixed: [['leche', 200], ['banano', 100]], fat: 'mani', tags: ['whey', 'dairy'] },
+  { id: 'a-albondigas', slot: 'almuerzo', name: 'Albóndigas de {P} con arroz y ensalada', prep: 'nevera', mins: 5, p: { pool: true, only: ['molida', 'res', 'pechuga', 'muslo'] }, c: 'arroz', fixed: [['verduras', 150]], fat: 'aceite', tags: [] },
+  { id: 'a-guisado', slot: 'almuerzo', name: '{P} guisado con papa y verduras', prep: 'nevera', mins: 5, p: { pool: true }, c: 'papa', fixed: [['verduras', 120]], fat: 'aceite', tags: [] },
+  { id: 'a-bolonesa', slot: 'almuerzo', name: 'Pasta a la boloñesa con {P}', prep: 'cocinar', mins: 20, p: { pool: true, only: ['molida', 'res', 'cerdo'] }, c: 'pasta', fixed: [['verduras', 100]], fat: 'aceite', tags: ['gluten'] },
+  { id: 'a-yuca', slot: 'almuerzo', name: '{P} con yuca y ensalada', prep: 'cocinar', mins: 25, p: { pool: true }, c: 'yuca', fixed: [['verduras', 150]], fat: 'aceite', tags: [] },
+  { id: 'a-camote', slot: 'almuerzo', name: '{P} con batata asada y ensalada', prep: 'cocinar', mins: 30, p: { pool: true }, c: 'camote', fixed: [['verduras', 150]], fat: 'aceite', tags: [] },
+  { id: 'a-sancocho', slot: 'almuerzo', name: 'Sopa tipo sancocho de {P} con papa y yuca', prep: 'nevera', mins: 5, p: { pool: true, only: ['muslo', 'pechuga', 'res', 'cerdo'] }, c: 'papa', fixed: [['yuca', 100], ['verduras', 120]], fat: 'aceite', tags: [] },
+  { id: 'a-frijoles', slot: 'almuerzo', name: 'Fríjoles con arroz, {P} y aguacate', prep: 'nevera', mins: 5, p: { pool: true }, c: 'arroz', fixed: [['frijol', 150], ['verduras', 80], ['aguacate', 40]], tags: [], needs: 'legumbres' },
+  { id: 'a-pescado', slot: 'almuerzo', name: 'Pescado al horno con papa y verduras', prep: 'cocinar', mins: 25, p: { pool: true, only: ['pescado'] }, c: 'papa', fixed: [['verduras', 150]], fat: 'aceite', tags: [] },
+  { id: 'a-burger', slot: 'almuerzo', name: 'Hamburguesa casera fit de {P} con pan integral y papa', prep: 'cocinar', mins: 20, p: { pool: true, only: ['molida', 'res', 'pechuga'] }, c: 'pan', fixed: [['papa', 150], ['verduras', 80]], fat: 'aceite', tags: ['gluten'] },
+  { id: 'a-wok', slot: 'almuerzo', name: 'Salteado tipo wok de {P} con arroz y verduras', prep: 'rapido', mins: 15, p: { pool: true }, c: 'arroz', fixed: [['verduras', 200]], fat: 'aceite', tags: [] },
+  { id: 'c-pasta', slot: 'cena', name: 'Pasta con {P} y verduras salteadas', prep: 'rapido', mins: 18, p: { pool: true }, c: 'pasta', fixed: [['verduras', 150]], fat: 'aceite', tags: ['gluten'] },
+  { id: 'c-sopa', slot: 'cena', name: 'Sopa de {P} con papa y verduras', prep: 'nevera', mins: 5, p: { pool: true }, c: 'papa', fixed: [['verduras', 200]], fat: 'aceite', tags: [] },
+  { id: 'c-camote', slot: 'cena', name: '{P} con batata y ensalada', prep: 'nevera', mins: 5, p: { pool: true }, c: 'camote', fixed: [['verduras', 150]], fat: 'aceite', tags: [] },
+  { id: 'c-arepa', slot: 'cena', name: 'Arepa rellena de {P} con aguacate', prep: 'rapido', mins: 10, p: { pool: true, only: ['muslo', 'pechuga', 'res', 'cerdo', 'molida'] }, c: 'arepa', fixed: [['aguacate', 50], ['verduras', 60]], tags: [] },
+  { id: 'c-pescado', slot: 'cena', name: 'Pescado a la plancha con papa y ensalada', prep: 'rapido', mins: 15, p: { pool: true, only: ['pescado'] }, c: 'papa', fixed: [['verduras', 150]], fat: 'aceite', tags: [] },
+  { id: 's-requeson', slot: 'snack', name: 'Requesón con banano y maní', prep: 'nevera', mins: 1, p: { food: 'requeson' }, c: 'banano', fixed: [], fat: 'mani', tags: ['dairy'] },
+  { id: 's-arepa-huevo', slot: 'snack', name: 'Arepa con huevo', prep: 'rapido', mins: 6, p: { food: 'huevo' }, c: 'arepa', fixed: [], fat: 'aceite', tags: ['egg'] },
+  { id: 's-avena-whey', slot: 'snack', name: 'Avena batida con whey y leche', prep: 'rapido', mins: 3, p: { food: 'whey' }, c: 'avena', fixed: [['leche', 150]], tags: ['whey', 'dairy'] },
+  { id: 's-yogur-avena', slot: 'snack', name: 'Yogur griego con avena y fruta', prep: 'nevera', mins: 1, p: { food: 'yogur' }, c: 'avena', fixed: [['banano', 80]], fat: 'mani', tags: ['dairy'] },
+  { id: 's-pan-atun', slot: 'snack', name: 'Pan integral con atún', prep: 'rapido', mins: 4, p: { food: 'atun' }, c: 'pan', fixed: [], tags: ['gluten'], needs: 'atun' },
 ];
 
 /* Recetas de preparación por plantilla. {P} = proteína del día. Las cantidades son las que muestra cada comida. */
@@ -250,9 +282,52 @@ const RECIPES = {
   's-huevos': ['Cocina los huevos en agua hirviendo 10 min, enfríalos y pélalos.', 'Cómelos con la fruta. Puedes dejarlos listos en la nevera hasta 4 días.'],
   's-atun': ['Escurre el atún y mézclalo con limón y sal.', 'Asa la arepa y rellénala con el atún.'],
   's-sandwich': [COOK_P, 'Desmenúzalo con un tenedor y mézclalo con sal y un poco de limón.', 'Tuesta el pan y arma el sándwich con {P} desmechado.'],
+  'd-pericos': ['Pica tomate y cebolla (las verduras) y sofríelos 2 min con un poco de aceite y sal.', 'Agrega los huevos batidos y revuelve a fuego medio hasta que cuajen.', 'Asa la arepa y sirve con el banano.'],
+  'd-pancakes': ['Licúa o tritura la avena y mézclala con la whey, el huevo y medio banano hasta tener una masa espesa.', 'Cocina porciones en sartén antiadherente con una gota de aceite, 2 min por lado.', 'Sirve con el resto del banano en rodajas y el maní.'],
+  'd-requeson': ['Pon el requesón en un bowl.', 'Agrega la avena, el banano en rodajas y el maní picado.', 'Mezcla y come frío; se puede dejar listo la noche anterior.'],
+  'd-omelette': ['Bate los huevos con sal y pimienta.', 'Saltea las verduras 3 min en el aceite, vierte los huevos y cocina tapado a fuego bajo 4 min.', 'Dobla el omelette y sírvelo con el pan tostado.'],
+  'd-papa-huevo': ['Cocina la papa en cubos (hervida o microondas) y dórala 4 min con una gota de aceite.', 'Agrega las verduras y después los huevos batidos; revuelve hasta que cuajen.', 'Ajusta con sal y pimienta.'],
+  'd-camote': ['Hornea o hierve la batata en trozos hasta que esté tierna (20-25 min), o usa la ya cocida.', 'Cocina los huevos al gusto (fritos o revueltos) en poco aceite.', 'Sirve con el aguacate en láminas, sal y limón.'],
+  'd-avena-cocida': ['Cocina la avena con la leche a fuego bajo 4-5 min, moviendo.', 'Retira del fuego, espera 1 min y mezcla la whey (si la pones hirviendo se corta).', 'Sirve con el banano en rodajas y el maní.'],
+  'a-albondigas': ['Mezcla {P} (molida o picada fina) con sal, ajo, un poco de cebolla y forma bolitas.', 'Dóralas en sartén o airfryer hasta que estén bien cocidas por dentro (~75 °C).', 'Cocina o recalienta el arroz y saltea las verduras 4 min.', 'Sirve las albóndigas sobre el arroz con las verduras.'],
+  'a-guisado': ['Sofríe cebolla y tomate (hogao) con una gota de aceite.', 'Agrega {P} en trozos y la papa en cubos con un poco de agua; tapa y cocina a fuego medio 20-25 min.', 'Suma las verduras los últimos 5 min y ajusta de sal.'],
+  'a-bolonesa': ['Cuece la pasta en agua con sal según el paquete y escúrrela.', 'Sofríe cebolla, ajo y las verduras picadas; agrega {P} y cocina hasta que esté bien cocido.', 'Añade tomate triturado, sal y orégano y deja 8 min.', 'Mezcla con la pasta y sirve.'],
+  'a-yuca': ['Pela la yuca, córtala en trozos y cuécela 20-25 min hasta que esté tierna.', COOK_P, 'Prepara una ensalada con las verduras, limón y sal. Sirve todo junto.'],
+  'a-camote': ['Corta la batata en trozos y hornéala a 200 °C 25-30 min (o hiérvela 15 min).', COOK_P, 'Acompaña con la ensalada de verduras y limón.'],
+  'a-sancocho': ['Pon a hervir agua con sal, cebolla y ajo y agrega {P} en trozos; cocina 15 min.', 'Suma la papa y la yuca en trozos y las verduras; cocina 15 min más hasta que todo esté tierno.', 'Sirve caliente. Se recalienta muy bien y se puede congelar.'],
+  'a-frijoles': ['Calienta los fríjoles ya cocidos con un poco de agua y cebolla.', COOK_P, 'Sirve sobre el arroz con {P}, las verduras y el aguacate en láminas.'],
+  'a-pescado': ['Sazona el pescado con sal, ajo y limón.', 'Hornéalo a 200 °C 12-15 min (o a la plancha 3-4 min por lado) hasta que se desmenuce.', 'Cuece la papa y saltea las verduras 4 min. Sirve todo junto.'],
+  'a-burger': ['Mezcla {P} con sal, ajo, pimienta y un poco de cebolla rallada; forma una hamburguesa gruesa.', 'Cocínala en sartén o airfryer 4-5 min por lado hasta que esté bien cocida por dentro.', 'Hornea o hierve la papa en bastones. Tuesta el pan.', 'Arma la hamburguesa con lechuga, tomate y las verduras. Es tu antojo de hamburguesa en versión fit.'],
+  'a-wok': ['Corta {P} en tiras finas y las verduras en trozos pequeños.', 'Saltea {P} a fuego alto con el aceite 4-5 min hasta que esté bien cocido.', 'Agrega las verduras 3 min con ajo, jengibre y un chorrito de salsa de soya.', 'Sirve sobre el arroz recién calentado.'],
+  'c-pasta': ['Cuece la pasta según el paquete y escúrrela.', COOK_P + ' Córtalo en trozos.', 'Saltea las verduras con el aceite 4 min, une la pasta y {P} y mezcla a fuego bajo 1 min.'],
+  'c-sopa': ['Hierve {P} en trozos con sal, ajo y cebolla 15 min.', 'Agrega la papa en cubos y las verduras y cocina 15 min más.', 'Sirve caliente con limón. Rinde para varios días.'],
+  'c-camote': ['Hornea la batata en trozos a 200 °C 25-30 min (o usa la ya cocida y recaliéntala).', COOK_P, 'Sirve con la ensalada de verduras y limón.'],
+  'c-arepa': ['Cocina {P}, desmenúzalo y mézclalo con sal, limón y un poco de cebolla.', 'Asa la arepa y ábrela por la mitad.', 'Rellena con {P}, las verduras picadas y el aguacate.'],
+  'c-pescado': ['Sazona el pescado con sal, ajo y limón.', 'Cocínalo a la plancha 3-4 min por lado hasta que se desmenuce.', 'Sirve con la papa cocida y la ensalada de verduras.'],
+  's-requeson': ['Pon el requesón en un bowl, agrega el banano en rodajas y el maní picado. Listo.'],
+  's-arepa-huevo': ['Cocina los huevos al gusto con una gota de aceite.', 'Asa la arepa, ábrela y rellénala con el huevo.'],
+  's-avena-whey': ['Licúa la avena con la leche y la whey 20 segundos.', 'Tómala fría; si quieres, déjala 10 min para que espese.'],
+  's-yogur-avena': ['Mezcla el yogur con la avena.', 'Agrega el banano en rodajas y el maní picado.'],
+  's-pan-atun': ['Escurre el atún y mézclalo con limón, sal y pimienta.', 'Tuesta el pan y arma el sándwich.'],
 };
-const TIMES = { 3: ['8:00', '13:00', '19:30'], 4: ['8:00', '13:00', '16:30', '19:30'], 5: ['7:30', '10:30', '13:00', '16:30', '19:30'] };
-const SLOTS = { 3: [['desayuno', .27], ['almuerzo', .38], ['cena', .35]], 4: [['desayuno', .25], ['almuerzo', .33], ['snack', .12], ['cena', .30]], 5: [['desayuno', .22], ['snack', .12], ['almuerzo', .30], ['snack', .10], ['cena', .26]] };
+/** Receta de las comidas genéricas de respaldo (sin plantilla propia). */
+const genericSteps = (tpl, pf) => {
+  const c = FOODS[tpl.c].s, veg = tpl.fixed.some(([id]) => id === 'verduras');
+  const prot = pf === 'huevo' ? ['Cocina los huevos (duros o revueltos en poco aceite).'] : pf === 'yogur' ? ['Pon el yogur griego en un bowl.'] : pf === 'whey' ? ['Licúa o mezcla la whey con agua o leche.'] : pf === 'atun' ? ['Escurre el atún y mézclalo con limón y sal.'] : [COOK_P];
+  return [...prot, `Prepara ${c} (cocido, tostado o fresco según el alimento) y pésalo con las cantidades de la comida.`, veg ? 'Saltea o sirve las verduras con el aceite, sal y limón.' : 'Suma la fruta o el maní si la comida lo trae.', 'Arma el plato y listo.'];
+};
+const TIMES = { 3: ['8:00', '13:00', '19:30'], 4: ['8:00', '13:00', '16:30', '19:30'], 5: ['7:30', '10:30', '13:00', '16:30', '19:30'], 6: ['7:00', '9:30', '12:30', '15:30', '18:30', '21:00'] };
+const SLOTS = { 3: [['desayuno', .27], ['almuerzo', .38], ['cena', .35]], 4: [['desayuno', .25], ['almuerzo', .33], ['snack', .12], ['cena', .30]], 5: [['desayuno', .22], ['snack', .12], ['almuerzo', .30], ['snack', .10], ['cena', .26]], 6: [['desayuno', .20], ['snack', .10], ['almuerzo', .25], ['snack', .12], ['cena', .23], ['snack', .10]] };
+/** Reparto profesional por comida: devuelve [slot, fracción de kcal/carbos/grasa, fracción de proteína].
+ *  Proteína: mitad por igual entre comidas y mitad según las kcal (≈ 25-40 g por toma, estimula la síntesis muscular).
+ *  Definición: algo más de calorías y proteína en el almuerzo/cena (saciedad) y snack ligero. Volumen: snacks más grandes. */
+export function slotPlan(meals, goal = 'maint') {
+  const base = SLOTS[meals] || SLOTS[3], n = base.length;
+  const adj = { cut: { snack: .85, cena: 1.06, almuerzo: 1.04, desayuno: 1 }, bulk: { snack: 1.2, cena: 1, almuerzo: 1, desayuno: 1 }, maint: {} }[goal] || {};
+  const kc = base.map(([sl, f]) => f * (adj[sl] || 1)), sk = kc.reduce((a, b) => a + b, 0);
+  const pw = base.map(([sl], i) => 0.5 * (kc[i] / sk) + 0.5 / n * (goal === 'cut' && sl === 'cena' ? 1.1 : 1)), sp = pw.reduce((a, b) => a + b, 0);
+  return base.map(([sl], i) => [sl, kc[i] / sk, pw[i] / sp]);
+}
 const OPT2FOODS = { pollo: ['muslo', 'pechuga'], molida: ['molida'], res: ['res'], cerdo: ['cerdo'], pescado: ['pescado'], atun: ['atun'], huevo: ['huevo'], visceras: ['higado', 'corazon'], legumbres: ['lenteja', 'frijol'] };
 
 /** Pool de proteínas según gustos, presupuesto y restricciones. Devuelve { pool, excluded, added }. */
@@ -291,10 +366,54 @@ function solve(tpl, pFood, cFood, T, pool) {
 }
 const label = it => { const f = FOODS[it.id]; return f.unit ? `${it.g / f.unit} ${it.g / f.unit === 1 ? 'huevo' : 'huevos'} (${it.g} g)` : `${it.g} g ${f.n.toLowerCase().replace(' (polvo)', '').replace(' (seca)', '').replace(' (lata)', '')}`; };
 
+/* ---------- v34: estilos de dieta ----------
+ * Estructura inspirada en rutinas públicas de creadores fitness (CBum, Jesse James West, Anatoly, Nippard/Sulek). NO se copian sus gramos:
+ * se toman las proporciones de macros, el número de comidas y qué tanto repiten la comida, y se escalan a TU peso, kcal y objetivo. */
+const CLASSIC = ['d-oats', 'd-duros', 'd-calentado', 'd-revueltos', 'd-papa-huevo', 'a-bowl', 'a-papa', 'a-albondigas', 'c-bowl', 'c-papa', 'c-tortilla', 's-batido', 's-yogur', 's-huevos', 's-sandwich'];
+const PROTEIN = ['d-oats', 'd-pancakes', 'd-yogur', 'd-omelette', 'd-avena-cocida', 'a-bowl', 'a-wok', 'a-bolonesa', 'a-burger', 'c-bowl', 'c-salteado', 'c-atun', 'c-pescado', 's-batido', 's-yogur', 's-requeson', 's-avena-whey', 's-atun', 's-pan-atun'];
+const FARM = ['d-requeson', 'd-calentado', 'd-papa-huevo', 'd-duros', 'd-pericos', 'a-guisado', 'a-sancocho', 'a-papa', 'a-yuca', 'a-frijoles', 'c-tortilla', 'c-papa', 'c-sopa', 's-requeson', 's-huevos', 's-yogur-avena', 's-arepa-huevo'];
+export const DIET_STYLES = {
+  balanced: { n: '⚖️ Equilibrado', d: 'Reparto estándar para tu objetivo: variado y fácil de seguir.', meals: '3-5', rep: 99 },
+  classic: { n: '🏆 Classic (estilo CBum)', d: 'Pocos alimentos simples que se repiten, proteína alta y carbohidratos para rendir; en definición, grasa baja. Comida «aburrida» pero que funciona.', meals: '4-6', rep: 1, flavors: false, prefer: CLASSIC,
+    pct: { cut: [.36, .48, .16], maint: [.30, .45, .25], bulk: [.26, .45, .29] } },
+  protein: { n: '💪 Alto en proteína (estilo Jesse James West)', d: 'Seis tomas con mucha proteína (≈40 % de las kcal): batidos, avena, bowls y snacks proteicos, con margen para comer algo que te guste.', meals: '5-6', rep: 4, prefer: PROTEIN,
+    pct: { cut: [.42, .38, .20], maint: [.40, .40, .20], bulk: [.35, .45, .20] } },
+  farm: { n: '🌾 Granja y fuerza (estilo Anatoly)', d: 'Comida simple de granja: huevo, requesón, carne, papa, yuca y avena; muchas comidas pequeñas con proteína en cada una.', meals: '5-6', rep: 3, prefer: FARM,
+    pct: { cut: [.34, .42, .24], maint: [.30, .45, .25], bulk: [.27, .48, .25] } },
+  flex: { n: '🎲 Flexible (estilo Nippard/Sulek)', d: 'Máxima variedad y pocas reglas: proteína suficiente en cada comida y el resto libre. Ideal si te aburres fácil.', meals: '3-4', rep: 99,
+    pct: { cut: [.34, .40, .26], maint: [.28, .45, .27], bulk: [.25, .48, .27] } },
+};
+/** Macros del día según el estilo: kcal fijas, proteína y grasa por % (con pisos por kg) y carbohidratos = lo que queda (así siempre cuadra con las kcal). */
+export function styleTarget(t, style, goal = 'maint', kg = 0) {
+  const st = DIET_STYLES[style], kcal = t.kcal; let p = t.p, f = t.f;
+  if (st?.pct) { const x = st.pct[goal] || st.pct.maint; p = x[0] * kcal / 4; f = x[2] * kcal / 9; }
+  if (kg > 30) { p = Math.min(Math.max(p, 1.6 * kg), 2.8 * kg); f = Math.max(f, 0.6 * kg); }
+  p = Math.round(p); f = Math.round(f);
+  return { kcal, p, f, c: Math.max(0, Math.round((kcal - 4 * p - 9 * f) / 4)) };
+}
+/** Toques/salsas gratis (~10 kcal) para que la misma proteína no sepa igual todos los días. [texto, lleva lácteo] */
+const FLAVORS = [['hogao criollo (tomate y cebolla sofritos)', 0], ['chimichurri (perejil, ajo, limón y orégano)', 0], ['salsa BBQ casera (tomate, ajo, pimentón y vinagre)', 0], ['pico de gallo con limón', 0], ['salsa de yogur con limón y ajo', 1], ['ají criollo (cilantro, cebolla y ají)', 0], ['soya baja en sodio con jengibre', 0], ['limón, pimienta y orégano', 0]];
+
+/* ---------- v34: comidas fuera del plan (antojos, restaurante, fiesta). Valores aproximados por unidad; se afinan con foto/IA ---------- */
+export const OFFLIB = [
+  ['burger', '🍔', 'Hamburguesa con papas (combo)', 'combo', 900, 35, 85, 48], ['burger1', '🍔', 'Hamburguesa sola', 'unidad', 550, 28, 40, 30],
+  ['pizza', '🍕', 'Pizza', 'porción', 285, 12, 33, 11], ['perro', '🌭', 'Perro caliente', 'unidad', 450, 16, 36, 26],
+  ['salchipapa', '🍟', 'Salchipapa', 'plato', 1000, 28, 90, 58], ['empanada', '🥟', 'Empanada', 'unidad', 230, 7, 22, 13],
+  ['pollofrito', '🍗', 'Pollo frito', 'presa', 300, 22, 10, 19], ['bandeja', '🥘', 'Bandeja paisa', 'plato', 1500, 70, 120, 80],
+  ['corrientazo', '🍛', 'Corrientazo completo', 'plato', 850, 40, 100, 28], ['arepaqueso', '🫓', 'Arepa con queso', 'unidad', 330, 12, 38, 15],
+  ['bunuelo', '🥯', 'Buñuelo / pandebono', 'unidad', 190, 5, 18, 11], ['pastarest', '🍝', 'Pasta de restaurante', 'plato', 750, 25, 95, 28],
+  ['tacos', '🌮', 'Tacos', '2 unidades', 480, 22, 45, 24], ['sushi', '🍣', 'Sushi', '8 piezas', 380, 15, 65, 6],
+  ['helado', '🍦', 'Helado', 'copa', 280, 5, 34, 14], ['postre', '🍰', 'Postre / torta', 'porción', 380, 5, 50, 18],
+  ['chocolate', '🍫', 'Chocolatina', 'unidad', 230, 3, 26, 13], ['gaseosa', '🥤', 'Gaseosa', 'vaso', 140, 0, 35, 0],
+  ['cerveza', '🍺', 'Cerveza', 'unidad', 150, 1, 13, 0], ['licor', '🥃', 'Trago (licor)', 'trago', 100, 0, 0, 0],
+];
+export const offItem = id => { const o = OFFLIB.find(x => x[0] === id); return o ? { id: o[0], ic: o[1], n: o[2], unit: o[3], k: o[4], p: o[5], c: o[6], f: o[7] } : null; };
+
 /** Menú de 7 días. target = {kcal,p,c,f} base; seed rota las variantes. */
 export function generateMenu(target, prefs = {}, seed = 0, opts = {}) {
   const COUNT = opts.count || 7, blockOf = opts.blockOf || (d => (d < 3 ? 0 : 1)); // blockOf: qué días comparten receta (se cocina una vez)
-  const meals = +prefs.meals || 3, slots = SLOTS[meals] || SLOTS[3], { pool, excluded, added } = proteinPool(prefs);
+  const meals = [3, 4, 5, 6].includes(+prefs.meals) ? +prefs.meals : 3, slots = slotPlan(meals, opts.goal), { pool, excluded, added } = proteinPool(prefs);
+  const ST = DIET_STYLES[prefs.dietStyle] || DIET_STYLES.balanced, T0 = styleTarget(target, prefs.dietStyle, opts.goal, opts.kg), last = {}, lastBi = {};
   const rs = prefs.restrict || [], noDairy = rs.includes('lacteos') || false, noGluten = rs.includes('gluten'), whey = (prefs.supps || []).includes('whey');
   const eggOK = (prefs.proteins || []).includes('huevo') || !(prefs.proteins || []).length, atunOK = (prefs.proteins || []).includes('atun');
   const fridge = prefs.fridge || 'mixto', cookMax = { rapido: 15, medio: 30, largo: 999 }[prefs.cook] || 999, batch = prefs.style === 'batch';
@@ -310,33 +429,70 @@ export function generateMenu(target, prefs = {}, seed = 0, opts = {}) {
     if (t.p.pool && !poolFor(t).length) return false;
     return true;
   };
+  // Respaldo: si las exclusiones dejan una comida sin plantillas, se arma una con los carbohidratos/proteínas que SÍ acepta (nunca se descarta una comida).
+  const carbOK = Object.keys(FOODS).filter(id => FOODS[id].kind === 'carb' && !ex.includes(id) && !(noGluten && ['pan', 'pasta'].includes(id)));
+  const CPREF = { desayuno: ['avena', 'arepa', 'pan', 'banano', 'arroz', 'papa', 'platano', 'pasta'], snack: ['banano', 'arepa', 'pan', 'avena', 'platano', 'papa', 'arroz', 'pasta'], almuerzo: ['arroz', 'papa', 'platano', 'pasta', 'arepa', 'avena', 'pan', 'banano'] };
+  CPREF.cena = CPREF.almuerzo;
+  const fatOK = ['aceite', 'mani', 'aguacate'].filter(id => !ex.includes(id));
+  const lightP = ['huevo', 'yogur', 'whey', 'atun'].filter(id => !ex.includes(id) && !(id === 'huevo' && !eggOK) && !((id === 'yogur' || id === 'whey') && noDairy) && !(id === 'whey' && !whey) && !(id === 'atun' && !atunOK) && !(veg && id === 'atun'));
+  const generic = slot => {
+    const cs = (CPREF[slot] || CPREF.almuerzo).filter(id => carbOK.includes(id)); if (!cs.length) cs.push(carbOK[0] || 'arroz');
+    const light = slot === 'desayuno' || slot === 'snack', out = [];
+    cs.slice(0, 3).forEach((c, i) => {
+      const pf = light && lightP.length ? lightP[i % lightP.length] : null, tp = FOODS[c].s;
+      out.push({ id: `g-${slot}-${c}${pf ? '-' + pf : ''}`, slot, generic: true, name: pf ? `${FOODS[pf].s.charAt(0).toUpperCase() + FOODS[pf].s.slice(1)} con ${tp}` : `{P} con ${tp}${light ? '' : ' y verduras'}`, prep: 'nevera', mins: 5,
+        p: pf ? { food: pf } : { pool: true, not: ['huevo', 'higado', 'lenteja', 'frijol'] }, c, fixed: light ? [] : [['verduras', 150]], fat: fatOK[0] || null, tags: [] });
+    });
+    return out;
+  };
   const pick = slot => {
     let list = TPL.filter(t => t.slot === slot && allow(t));
     const step = (fn) => { const l = list.filter(fn); if (l.length) list = l; };
     step(t => t.prep === 'fuera' || t.mins <= cookMax || t.prep === 'nevera');
+    if (ST.prefer) { const pf = list.filter(t => ST.prefer.includes(t.id)); if (pf.length >= 2) list = pf; } // el estilo elige sus comidas típicas si hay al menos 2
+    if (list.length < 2) list = [...list, ...generic(slot).filter(g => allow(g))]; // sin plantillas (o solo una): completa con comidas genéricas válidas
     if ((fridge === 'si') && (slot === 'desayuno' || slot === 'cena' || slot === 'snack')) step(t => t.prep === 'nevera');
     else if (fridge === 'no') step(t => t.prep !== 'nevera');
     return list;
   };
   const days = [];
   for (let d = 0; d < COUNT; d++) {
-    const dayMeals = slots.map(([slot, fr], si) => {
+    const dayMeals = slots.map(([slot, fr, pfr], si) => {
       const list = pick(slot); if (!list.length) return null;
       const blocked = (fridge === 'si' && ['desayuno', 'cena', 'snack'].includes(slot)) || (batch && slot !== 'snack'), bi = blocked ? blockOf(d) : d;
-      const tpl = list[(bi + seed + si) % list.length];
+      // Rotación: el estilo limita cuántas comidas distintas se usan (rep) y nunca repite la misma comida dos días seguidos si puede evitarlo (salvo la tanda cocinada junta).
+      const key = slot + si, ord = list.map((_, i) => list[(i + seed) % list.length]), sub = ord.slice(0, Math.max(1, Math.min(ST.rep || 99, ord.length)));
+      let ti = (bi + si) % sub.length; if (sub.length > 1 && !blocked && sub[ti].id === last[key]) ti = (ti + 1) % sub.length;
+      const tpl = sub[ti]; last[key] = tpl.id;
       let pf = tpl.p.food;
       if (tpl.p.pool) { const p = poolFor(tpl); pf = p[(bi + seed * 2 + si) % p.length]; }
-      const T = { p: target.p * fr, c: target.c * fr, f: target.f * fr };
+      const T = { p: T0.p * pfr, c: T0.c * fr, f: T0.f * fr };
       const tpl2 = ex.length ? { ...tpl, fixed: tpl.fixed.filter(([id]) => !ex.includes(id)), fat: ex.includes(tpl.fat) ? null : tpl.fat } : tpl;
       const { items, tot } = solve(tpl2, pf, tpl2.c, T, pool);
-      return { slot, time: (TIMES[slots.length] || [])[si] || '', id: tpl.id, name: (n => n.charAt(0).toUpperCase() + n.slice(1))(tpl.name.replace('{P}', FOODS[pf].s)), prep: tpl.prep, mins: tpl.mins, steps: vegSteps((RECIPES[tpl.id] || []).map(x => x.replace(/\{P\}/g, FOODS[pf].s))), items: items.map(it => ({ id: it.id, g: it.g, text: label(it) })), k: Math.round(tot.k), p: Math.round(tot.p), c: Math.round(tot.c), f: Math.round(tot.f) };
+      const fl = ST.flavors !== false && tpl.prep !== 'fuera' && (tpl.p.pool || MEAT.includes(pf)) ? FLAVORS.filter(([, dairy]) => !(dairy && noDairy))[(d + si + seed) % FLAVORS.filter(([, dairy]) => !(dairy && noDairy)).length] : null;
+      return { flavor: fl ? fl[0] : '', slot, time: (TIMES[slots.length] || [])[si] || '', id: tpl.id, name: (n => n.charAt(0).toUpperCase() + n.slice(1))(tpl.name.replace('{P}', FOODS[pf].s)), prep: tpl.prep, mins: tpl.mins, steps: vegSteps((RECIPES[tpl.id] || genericSteps(tpl, pf)).map(x => x.replace(/\{P\}/g, FOODS[pf].s)).concat(fl ? [`Toque del día (gratis, ~10 kcal): ${fl[0]}.`] : [])), items: items.map(it => ({ id: it.id, g: it.g, text: label(it) })), k: Math.round(tot.k), p: Math.round(tot.p), c: Math.round(tot.c), f: Math.round(tot.f) };
     }).filter(Boolean);
-    days.push(dayMeals);
+    days.push(fitDay(dayMeals, T0.kcal));
   }
   const notes = [];
+  if (prefs.dietStyle && DIET_STYLES[prefs.dietStyle]) notes.push(`Estilo ${DIET_STYLES[prefs.dietStyle].n}: ${DIET_STYLES[prefs.dietStyle].d}`);
   if (excluded.length) notes.push(`Por presupuesto dejé fuera: ${[...new Set(excluded.map(id => FOODS[id].s))].join(', ')}.`);
   if (added.length) notes.push(`Añadí opciones económicas para dar variedad: ${added.map(id => FOODS[id].s).join(', ')}.`);
   return { days, notes, prep: prepPlan(days) };
+}
+/** Ajuste diario: si las kcal del día se desvían >3 % de la meta, reparte la diferencia en el carbohidrato principal de cada comida (máx. ±35 % por comida). */
+function fitDay(ms, kcal) {
+  for (let it = 0; it < 4; it++) {
+    const diff = kcal - ms.reduce((a, m) => a + m.k, 0); if (!ms.length || Math.abs(diff) <= 0.03 * kcal) break;
+    ms.forEach(m => {
+      const ci = m.items.find(i => FOODS[i.id].kind === 'carb' && !FOODS[i.id].unit); if (!ci) return;
+      const dg = Math.max(-0.35 * ci.g, Math.min(0.35 * ci.g, (diff / ms.length) / (FOODS[ci.id].k / 100)));
+      ci.g = Math.max(10, Math.round((ci.g + dg) / 5) * 5); ci.text = label(ci);
+      const t = m.items.reduce((a, i) => { const x = m100(FOODS[i.id], i.g); return { k: a.k + x.k, p: a.p + x.p, c: a.c + x.c, f: a.f + x.f }; }, { k: 0, p: 0, c: 0, f: 0 });
+      m.k = Math.round(t.k); m.p = Math.round(t.p); m.c = Math.round(t.c); m.f = Math.round(t.f);
+    });
+  }
+  return ms;
 }
 /** Plan de cocina de domingo: recetas "de nevera" distintas de la semana. */
 function prepPlan(days) {
@@ -361,6 +517,7 @@ export function strategy({ target, prefs = {}, goal = 'maint', trainDays = 3 }) 
   const out = [], meals = +prefs.meals || 3, perMeal = Math.round(target.p / meals);
   out.push({ cut: `Definición: déficit moderado (≈20 %) con proteína alta (${target.p} g). Ritmo objetivo: perder ~0.5–0.7 % del peso por semana; si tu peso no se mueve 2 semanas, la auditoría ajusta hasta 250 kcal.`,
     maint: `Mantenimiento: ${target.kcal} kcal estables; usa el peso semanal solo para detectar derivas.`, bulk: `Volumen limpio (+10 %): sube ~0.25 % del peso por semana; si subes más rápido, es grasa y la auditoría recorta calorías.` }[goal]);
+  if (DIET_STYLES[prefs.dietStyle]) out.push(`${DIET_STYLES[prefs.dietStyle].n}: ${DIET_STYLES[prefs.dietStyle].d} Comidas sugeridas: ${DIET_STYLES[prefs.dietStyle].meals}.`);
   const hrs = (TIMES[meals] || TIMES[3]).map(h => { const [a, b] = h.split(':').map(Number); return `${((a + 11) % 12) + 1}:${String(b).padStart(2, '0')} ${a < 12 ? 'a. m.' : 'p. m.'}`; }).join(' · ');
   out.push(`⏰ Horario sugerido (${meals} comidas): ${hrs} → deja 3-5 h entre comidas, con ~${perMeal} g de proteína en cada una; la comida previa al entreno 1.5-3 h antes y una con proteína + carbohidrato dentro de las 2 h después. ${{ cut: 'En definición, lleva algo más de proteína a la cena para controlar el hambre y haz la última comida ≥2 h antes de dormir.', maint: '', bulk: 'En volumen no te saltes comidas; si cuesta llegar a las calorías, suma un batido entre comidas.' }[goal] || ''}`);
   out.push(`Reparte ${target.p} g de proteína en ${meals} comidas (≈${perMeal} g cada una). Esa es la clave para conservar/ganar músculo.`);
