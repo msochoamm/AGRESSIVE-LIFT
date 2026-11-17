@@ -3,36 +3,56 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="AGRESSIVE LIFT: entrenador y nutricionista con IA. Rutinas, descansos inteligentes, dietas y seguimiento.">
 <meta name="theme-color" content="#000000">
+<meta name="color-scheme" content="dark">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="AGRESSIVE LIFT">
 <link rel="manifest" href="manifest.json">
-<link rel="apple-touch-icon" href="icon-180.png">
-<link rel="stylesheet" href="styles.css">
-<link rel="modulepreload" href="app.js"><link rel="modulepreload" href="store.js"><link rel="modulepreload" href="engine.js"><link rel="modulepreload" href="nutrition.js"><link rel="modulepreload" href="exdb.js">
+<link rel="icon" type="image/png" href="assets/icon-192.png">
+<link rel="apple-touch-icon" href="assets/icon-180.png">
+<link rel="stylesheet" href="css/styles.css">
+<link rel="modulepreload" href="js/app.js"><link rel="modulepreload" href="js/store.js"><link rel="modulepreload" href="js/engine.js"><link rel="modulepreload" href="js/nutrition.js"><link rel="modulepreload" href="js/exdb.js"><link rel="modulepreload" href="js/session.js"><link rel="modulepreload" href="js/supabase.js">
 <title>AGRESSIVE LIFT</title>
+<style>
+/* Pantallas previas a la app (carga, error, selector de perfil): no dependen de css/styles.css */
+.boot{padding:30vh 16px 0;text-align:center;color:#ff2b57;font-size:22px}
+.boot small{display:block;color:#a1a1aa;font-size:14px;margin-top:6px}
+.boot .hint{color:#71717a;font-size:12px}
+.boot-btn{display:block;width:100%;max-width:320px;margin:0 auto 12px;padding:16px;border-radius:14px;border:2px solid #ff2b57;background:#000;color:#fff;font-size:20px;font-weight:900;letter-spacing:2px;cursor:pointer}
+.boot-btn.sm{width:auto;display:inline-block;margin-top:22px;padding:14px 22px;font-size:16px;letter-spacing:0}
+.who{padding:14vh 16px 0;text-align:center}.who img{display:block;margin:0 auto}.who p{color:#a1a1aa;margin:12px 0 24px}
+</style>
 </head>
 <body>
-<div id="app"><div style="padding:30vh 16px 0;text-align:center;color:#ff2b57;font-size:22px">Cargando…</div></div>
+<div id="app"><div class="boot">Cargando…</div></div>
+<noscript><div class="boot">AGRESSIVE LIFT necesita JavaScript para funcionar.</div></noscript>
 <script>
 /* Si la app no arranca, muestra el motivo en pantalla en vez de dejarla en negro. */
+var APP = document.getElementById('app');
 function repair(){var p=[];try{p.push(navigator.serviceWorker.getRegistrations().then(function(r){return Promise.all(r.map(function(x){return x.unregister()}))}))}catch(e){}try{p.push(caches.keys().then(function(k){return Promise.all(k.map(function(x){return caches.delete(x)}))}))}catch(e){}Promise.all(p).catch(function(){}).then(function(){location.reload()})}
-function fail(m){if(window.__ok)return;document.getElementById('app').innerHTML='<div style="padding:25vh 16px 0;text-align:center;color:#ff2b57;font-size:22px">No se pudo iniciar<br><small style="color:#a1a1aa;font-size:14px">'+String(m).replace(/</g,'&lt;')+'</small><br><button id="fix" style="margin-top:22px;padding:14px 22px;border-radius:14px;border:2px solid #ff2b57;background:#000;color:#fff;font-size:16px;font-weight:900">Reparar y reintentar</button><br><small style="color:#71717a;font-size:12px">Limpia la caché de la app. No borra tus datos.</small></div>';var b=document.getElementById('fix');if(b)b.onclick=repair}
-addEventListener('error',e=>fail(e.message));addEventListener('unhandledrejection',e=>fail(e.reason));
-setTimeout(()=>fail('Tiempo agotado. Revisa que todos los archivos estén en la misma carpeta (app.js, store.js, engine.js, nutrition.js, supabase.js, pdf.js, exdb.js).'),7000);
+function fail(m){
+  if(window.__ok)return;
+  APP.innerHTML='<div class="boot" style="padding-top:25vh">No se pudo iniciar<small>'+String(m).replace(/</g,'&lt;')+'</small><button id="fix" class="boot-btn sm">Reparar y reintentar</button><small class="hint">Limpia la caché de la app. No borra tus datos.</small></div>';
+  var b=document.getElementById('fix');if(b)b.onclick=repair;
+}
+addEventListener('error',function(e){fail(e.message)});
+addEventListener('unhandledrejection',function(e){fail(e.reason)});
+setTimeout(function(){fail('Tiempo agotado. Revisa que estén las carpetas js/, css/ y assets/ junto a index.html (js/app.js, js/store.js, js/engine.js, js/nutrition.js, js/supabase.js, js/session.js, js/pdf.js, js/exdb.js).')},7000);
 </script>
 <script>
 /* ¿Quién entrena? Se pregunta antes de abrir la app; "Cambiar usuario" vuelve aquí. */
 (function(){
-  var P=sessionStorage.getItem('al:profile');
-  function start(){import('./app.js').catch(function(e){fail(e.message||e)})}
-  if(P==='juani'||P==='sebastian')return start();
+  var USERS=[['juani','JUANI'],['sebastian','SEBASTIAN']], P=sessionStorage.getItem('al:profile');
+  function start(){import('./js/app.js').catch(function(e){fail(e.message||e)})}
+  if(USERS.some(function(u){return u[0]===P}))return start();
   window.__ok=1;
-  var h='<div style="padding:14vh 16px 0;text-align:center"><img src="logo.png" width="180" height="180" alt="" style="margin:0 auto"><p style="color:#a1a1aa;margin:12px 0 24px">¿Quién va a entrenar?</p>';
-  [['juani','JUANI'],['sebastian','SEBASTIAN']].forEach(function(u){h+='<button data-u="'+u[0]+'" style="display:block;width:100%;max-width:320px;margin:0 auto 12px;padding:16px;border-radius:14px;border:2px solid #ff2b57;background:#000;color:#fff;font-size:20px;font-weight:900;letter-spacing:2px">'+u[1]+'</button>'});
-  document.getElementById('app').innerHTML=h+'</div>';
-  document.getElementById('app').onclick=function(e){var b=e.target.closest('button[data-u]');if(!b)return;sessionStorage.setItem('al:profile',b.dataset.u);window.__ok=0;document.getElementById('app').innerHTML='<div style="padding:30vh 16px 0;text-align:center;color:#ff2b57;font-size:22px">Cargando…</div>';start();};
+  var h='<div class="who"><img src="assets/logo.png" width="180" height="180" alt="AGRESSIVE LIFT"><p>¿Quién va a entrenar?</p>';
+  USERS.forEach(function(u){h+='<button class="boot-btn" data-u="'+u[0]+'">'+u[1]+'</button>'});
+  APP.innerHTML=h+'</div>';
+  APP.onclick=function(e){var b=e.target.closest('button[data-u]');if(!b)return;APP.onclick=null;sessionStorage.setItem('al:profile',b.dataset.u);window.__ok=0;APP.innerHTML='<div class="boot">Cargando…</div>';start();};
 })();
 </script>
 </body>

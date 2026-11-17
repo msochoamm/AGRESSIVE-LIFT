@@ -1,0 +1,344 @@
+// Capa de datos. AUTH_ENABLED=false → MODO LOCAL: sin login, sin licencia, sin Supabase (todo en el dispositivo).
+// Para reactivar login + licencia: AUTH_ENABLED=true y rellenar URL/anon key. Si se activa SIN configurar, la app BLOQUEA (fail-closed).
+import { store } from './store.js';
+
+export const AUTH_ENABLED = false;                       // <-- true para volver a exigir login + licencia
+const SUPABASE_URL = 'https://TU-PROYECTO.supabase.co';  // <-- reemplazar
+const SUPABASE_ANON_KEY = 'TU-ANON-KEY';                 // <-- reemplazar (pública; la seguridad es RLS)
+const configured = !SUPABASE_URL.includes('TU-PROYECTO') && !SUPABASE_ANON_KEY.includes('TU-ANON-KEY');
+
+// IA REAL sin login: Edge Function 'ai' en Supabase (la clave de OpenAI vive allí como secreto).
+// Con URL/anon key reales la IA se activa sola; sin configurar, la app usa sus respuestas locales.
+const getKey = () => { try { return localStorage.getItem('al:aikey') || ''; } catch { return ''; } };
+export let AI_ON = configured || !!getKey();             // live binding: cambia al guardar/borrar la clave
+export const hasAiKey = () => !!getKey();
+export function setAiKey(k) { try { k ? localStorage.setItem('al:aikey', k) : localStorage.removeItem('al:aikey'); localStorage.removeItem('al:aimodel:auto'); localStorage.removeItem('al:aimodel:chain'); localStorage.removeItem('al:aimodel:at'); } catch {} offline = false; AI_ON = configured || !!k; setConn({ state: k ? 'idle' : 'nokey', kind: '', msg: '', model: '', provider: k ? PROVIDERS[providerOf(k)].name : '', tries: 0 }); }
+
+// Mejor modelo disponible: se consulta la lista de modelos con TU clave y se arma una cadena de respaldo (el más capaz primero).
+// Si un modelo falla (cupo, no existe, saturado) se prueba el siguiente. Se revisa al conectar y cada 7 días. Para forzar uno: localStorage.setItem('al:aimodel', 'nombre-del-modelo').
+const MODEL_PREF = ['gpt-6.1-sol', 'gpt-6-sol', 'gpt-5.6-sol', 'gpt-5.5', 'gpt-5.4', 'gpt-5.2', 'gpt-5.1', 'gpt-5', 'gpt-4.1', 'gpt-4o'];
+const FALLBACK_MODEL = 'gpt-4.1';
+/* Proveedores. La clave decide cuál se usa: AIza… → Google Gemini (GRATIS, sin tarjeta) · sk-… → OpenAI (de pago).
+   IMPORTANTE: Gemini se llama por su endpoint NATIVO (generateContent). Su modo "compatible con OpenAI" bloquea las llamadas desde el navegador (CORS). */
+const GEM = 'https://generativelanguage.googleapis.com/v1beta';
+const GEMINI_PREF = ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-flash-latest'];
+const PROVIDERS = {
+  gemini: { name: 'Gemini', pref: GEMINI_PREF, fallback: 'gemini-2.5-flash' },
+  openai: { name: 'OpenAI', base: 'https://api.openai.com/v1', pref: MODEL_PREF, fallback: FALLBACK_MODEL },
+};
+export const providerOf = (k = getKey()) => (/^AIza/.test(k) ? 'gemini' : 'openai');
+export const aiProvider = () => PROVIDERS[providerOf()].name;
+export const validKey = k => /^AIza[\w-]{30,}$/.test(k) || /^sk-[\w-]{20,}$/.test(k);
+export const aiModel = () => { try { return localStorage.getItem('al:aimodel') || localStorage.getItem('al:aimodel:auto') || ''; } catch { return ''; } };
+
+/* ---------- Red: errores con "tipo" para poder explicarlos y decidir si se reintenta ---------- */
+class AIError extends Error { constructor(kind, msg) { super(msg); this.kind = kind; } } // kind: network | timeout | key | quota | server | model | blocked | empty | other
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const pname = () => PROVIDERS[providerOf()].name;
+async function http(url, init = {}, ms = 15000) {
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), ms);
+  try { const res = await fetch(url, { ...init, signal: ctl.signal }); const j = await res.json().catch(() => null); return { res, j }; }
+  catch (e) {
+    if (e?.name === 'AbortError') throw new AIError('timeout', `${pname()} tardó demasiado en responder.`);
+    throw new AIError('network', `No pude llegar a ${pname()}. Si tienes internet, prueba con otra red (datos móviles o Wi-Fi) y desactiva VPN o bloqueadores de anuncios.`);
+  } finally { clearTimeout(t); }
+}
+function statusErr(res, j) {
+  const raw = JSON.stringify(j || {}), m = (Array.isArray(j) ? j[0] : j)?.error?.message || '', s = res.status, N = pname(), g = providerOf() === 'gemini';
+  if (s === 401 || s === 403 || (s === 400 && /api[_ ]?key.{0,30}(invalid|not valid)|API_KEY_INVALID|incorrect api key/i.test(raw)))
+    return new AIError('key', `La clave de ${N} no es válida o no tiene permiso.${g ? ' Crea otra en aistudio.google.com/apikey.' : ''}`);
+  if (s === 429) return new AIError('quota', g ? 'Llegaste al límite gratis de Gemini por ahora: espera un minuto y reintenta (el cupo diario se renueva solo).' : 'Sin saldo o límite de OpenAI alcanzado.');
+  if (s === 404) return new AIError('model', `El modelo no está disponible en ${N}.`);
+  if (s >= 500) return new AIError('server', `${N} está saturado en este momento (${s}). Reintenta en unos segundos.`);
+  return new AIError('other', m || `Error de ${N} (${s})`);
+}
+/** Lista de modelos: sirve a la vez de PRUEBA de conexión (red + CORS + clave válida). */
+async function listModels(key) {
+  const g = providerOf(key) === 'gemini';
+  const { res, j } = await http(g ? `${GEM}/models?pageSize=200` : PROVIDERS.openai.base + '/models', { headers: g ? { 'x-goog-api-key': key } : { Authorization: 'Bearer ' + key } }, 12000);
+  if (!res.ok) throw statusErr(res, j);
+  return g ? (j?.models || []).filter(m => (m.supportedGenerationMethods || []).includes('generateContent')).map(m => String(m.name).replace(/^models\//, '')) : (j?.data || []).map(m => m.id);
+}
+async function selectModel(key, force = false) {
+  if (!force) { try { const c = JSON.parse(localStorage.getItem('al:aimodel:chain') || 'null'); if (Array.isArray(c) && c.length && Date.now() - (+localStorage.getItem('al:aimodel:at') || 0) < 6048e5) return c; } catch {} }
+  const prov = providerOf(key), P = PROVIDERS[prov], ids = new Set(await listModels(key));
+  const any = prov === 'gemini' ? [...ids].filter(i => /^gemini-[\d.]+-flash$/.test(i)).sort().reverse() : [];
+  const chain = [...new Set([...P.pref.filter(m => ids.has(m)), ...any])].slice(0, 4); if (!chain.length) chain.push(P.fallback);
+  try { localStorage.setItem('al:aimodel:chain', JSON.stringify(chain)); localStorage.setItem('al:aimodel:auto', chain[0]); localStorage.setItem('al:aimodel:at', String(Date.now())); } catch {}
+  return chain;
+}
+export async function pickModel(force = false) { const key = getKey(); if (!key) return ''; try { return (await selectModel(key, force))[0]; } catch { return force ? '' : aiModel(); } }
+
+/* ---------- Estado de la conexión (la app lo muestra: conectando → éxito / reintentar / offline) ---------- */
+export const conn = { state: getKey() ? 'idle' : 'nokey', kind: '', msg: '', model: aiModel(), provider: getKey() ? PROVIDERS[providerOf()].name : '', tries: 0, at: 0 };
+const subs = new Set(); let offline = false, connecting = null;
+export const onConn = fn => { subs.add(fn); return () => subs.delete(fn); };
+const setConn = patch => { Object.assign(conn, patch, { at: Date.now() }); subs.forEach(f => { try { f(conn); } catch {} }); };
+/** Modo offline elegido por el usuario: la app deja de llamar a la IA y usa sus reglas locales. */
+export function setOffline(b) { offline = !!b; AI_ON = !offline && (configured || !!getKey()); }
+export function connectAI() {
+  if (connecting) return connecting;
+  connecting = (async () => {
+    const key = getKey();
+    if (!key) { setConn({ state: 'nokey', kind: 'nokey', msg: 'Falta la clave de IA', model: '', provider: '', tries: 0 }); return conn; }
+    const N = PROVIDERS[providerOf(key)].name; let err;
+    for (let i = 0; i < 3; i++) {
+      setConn({ state: 'connecting', kind: '', msg: '', provider: N, tries: i + 1 });
+      try { const chain = await selectModel(key, true); setOffline(false); setConn({ state: 'ok', kind: '', msg: '', model: chain[0], provider: N }); return conn; }
+      catch (e) { err = e; if (!['network', 'timeout', 'server'].includes(e.kind)) break; if (i < 2) await sleep(1500 * (i + 1)); }
+    }
+    const off = err?.kind === 'network' && typeof navigator !== 'undefined' && navigator.onLine === false;
+    setConn({ state: off ? 'offline' : 'fail', kind: off ? 'offline' : err?.kind || 'other', msg: off ? 'Tu teléfono no tiene internet en este momento.' : err?.message || 'No pude conectar.' });
+    return conn;
+  })().finally(() => { connecting = null; });
+  return connecting;
+}
+export const LOCAL_MODE = !AUTH_ENABLED;
+export const AUTH_MISCONFIGURED = AUTH_ENABLED && !configured;
+export const CONFIG_OK = AUTH_ENABLED && configured;
+// La librería solo se descarga si hace falta (en modo local la app no depende de ninguna red).
+export const sb = CONFIG_OK ? (await import('https://esm.sh/@supabase/supabase-js@2.45.4')).createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+
+const timeout = (p, ms = 8000) => Promise.race([p, new Promise((_, r) => setTimeout(() => r(new Error('timeout')), ms))]);
+
+export const signIn = (e, p) => sb.auth.signInWithPassword({ email: e, password: p });
+export const signUp = (e, p) => sb.auth.signUp({ email: e, password: p });
+export const signOut = () => sb.auth.signOut();
+
+/** {ok, reason}. Con auth activa: solo ok:true si hay fila 'active' y no vencida; todo lo demás bloquea. */
+export async function checkLicense(userId) {
+  if (LOCAL_MODE) return { ok: true };
+  if (!CONFIG_OK) return { ok: false, reason: 'network' };
+  try {
+    const { data, error } = await timeout(sb.from('licenses').select('status,expires_at').eq('user_id', userId).maybeSingle());
+    if (error) return { ok: false, reason: 'network' };
+    if (!data) return { ok: false, reason: 'missing' };
+    if (data.status !== 'active') return { ok: false, reason: 'inactive' };
+    if (data.expires_at && new Date(data.expires_at) <= new Date()) return { ok: false, reason: 'expired' };
+    return { ok: true };
+  } catch { return { ok: false, reason: 'network' }; }
+}
+
+/** Cola offline (IndexedDB): se reintenta al reconectar. No hace nada en modo local. */
+let flushing = false;
+export async function flush() {
+  if (!CONFIG_OK || flushing) return; flushing = true;
+  try {
+    let q = store.get('queue', []);
+    while (q.length) { const { error } = await timeout(sb.from(q[0].t).insert(q[0].row)); if (error) break; q = q.slice(1); store.set('queue', q); }
+  } catch {}
+  flushing = false;
+}
+const enqueue = (t, uid, r) => { if (!CONFIG_OK) return; store.set('queue', [...store.get('queue', []), { t, row: { user_id: uid, created_at: new Date().toISOString(), ...r } }].slice(-500)); flush(); };
+export const saveSet = (uid, r) => enqueue('set_logs', uid, r);
+export const saveBody = (uid, r) => enqueue('body_logs', uid, r);
+addEventListener('online', flush);
+
+/** IA vía Edge Function (requiere cuenta + licencia). En modo local lanza error y la app usa respuestas locales. */
+const BASE = `Eres el asistente experto de AGRESSIVE LIFT (hipertrofia y nutrición deportiva basadas en evidencia).
+Reglas: hablas como un entrenador y nutricionista humano, cercano y directo: frases cortas, SIN listas numeradas ni viñetas, SIEMPRE en español, específico a lo que el usuario acaba de pedir; nunca repitas una respuesta anterior ni uses plantillas genéricas. Tú tienes el control: decides si falta un dato (UNA pregunta conversacional) o si ya puedes armar el plan, y la app ejecuta tu command. Entrevista natural: no repitas lo que el usuario ya contestó (revisa el historial y preferences) y, en cuanto tengas lo imprescindible, actúa en ese mismo turno.
+Si pide o necesita una rutina: arma el plan completo respetando EXACTAMENTE los días/división que indique (ejercicios con series x reps, RIR, orden, descansos, progresión) y entrégalo en payload con command update_routine; en note solo cuenta en pocas frases por qué funciona y cuándo empieza.
+Si pide dieta: fija kcal y macros con command update_macros (proteína 1.6-2.2 g/kg, grasa >=0.7 g/kg, resto carbohidratos), comidas con cantidades en gramos y alternativas locales (Colombia: arroz, fríjoles, plátano, arepa, huevos, pollo, corrientazo).
+Si la tarea es de ENTRENAMIENTO, los únicos datos imprescindibles son: objetivo, nivel, días/división y lesiones. ¡NUNCA pidas peso ni estatura aquí!
+Si la tarea es de NUTRICIÓN, los datos imprescindibles son: peso, estatura, edad, presupuesto y tiempo de cocina.
+Si falta un dato imprescindible para la tarea ACTUAL, pregunta UNA sola cosa concreta al final. Si no tienes el dato, no inventes cifras: dilo.
+Guía por objetivo (si el contexto trae goalGuide/planLock, respétalos):
+- Definición: déficit moderado (~0.5-1 % del peso/semana, ~300-500 kcal), proteína ~1.9-2.2 g/kg, fuerza pesada y constante (conserva carga), cardio LISS y pasos; fase típica 8-16 semanas; no recomiendes déficits de 800-1000+ kcal.
+- Volumen/hipertrofia: superávit pequeño (+5-10 %, ~+250-300 kcal), ganar ~0.25-0.5 % del peso/semana, proteína 1.6-2.2 g/kg, grasa 0.8-1.2 g/kg, 10-20 series duras por músculo/semana, frecuencia 2x/semana, RIR 1-3; ajusta calorías según el ritmo real cada 2-4 semanas.
+- Fuerza: 3-6 reps en básicos, descansos 3-5 min, mantenimiento o superávit leve.
+- En cualquier dieta incluye SIEMPRE la hora sugerida de cada comida (según horario de entreno y sueño) y cuántas comidas conviene para el objetivo (3-5 comidas, 3-5 h entre ellas, comida pre-entreno 1.5-3 h antes, proteína+carbohidrato en las 2 h posteriores).
+- No cambies ejercicios antes de 6-8 semanas. Si hay planLock activo, el plan no se modifica hasta planLock.until.
+Fases (escríbelas SIEMPRE en mayúsculas para que la app las vuelva tocables): VOLUMEN (superávit calórico, ganar músculo, 8-16 semanas), CONSOLIDACIÓN (normocalórica 2-4 semanas tras el volumen), DEFINICIÓN (déficit calórico, perder grasa conservando músculo con fuerza pesada, 8-16 semanas; con DIET BREAK de 1-2 semanas a mitad del déficit si hay estancamiento o agotamiento), DIETA INVERSA (subir calorías muy despacio semana a semana al salir del déficit, ~4-8 semanas, para evitar rebote) y MANTENIMIENTO (calorías = gasto, estable). Recomienda la fase según el punto de partida del usuario (peso, grasa, fase anterior, tiempo en déficit).
+Organización (esto es donde la gente pierde tiempo y no logra la perfección, así que sé concreto): 
+- ENTRENAMIENTO: antes de armar y bloquear un plan, pregunta cuándo fue el último entrenamiento y qué se hizo, y qué días de la semana va a entrenar; arma el calendario con fechas desde ahí (continúa la rotación donde quedó) y di qué toca cada día.
+- DIETA: organiza el "cómo": qué comprar, qué cocinar y qué día (cocina por lotes), cómo porcionar, guardar y recalentar, hora de cada comida y qué hacer si un día se complica. Usa el campo cocina del contexto si viene. Indica el orden de los pasos y el tiempo aproximado.
+Protocolo para MAXIMIZAR resultados (aplícalo en cada plan, combinando TODAS las fuentes de abajo según lo que el usuario quiere lograr):
+1) Identifica objetivo (volumen/definición/fuerza), nivel, días, tiempo por sesión, equipo, lesiones, horario de entreno/sueño y presupuesto.
+2) Entrenamiento: elige estructura y estilo (CBum/Rambod, Jesse James West o base powerlifting) adaptado al nivel; 10-20 series duras por músculo/semana, frecuencia 2x, RIR 1-3, rango completo, progresión de carga; no cambies ejercicios antes de 6-8 semanas.
+3) Nutrición: kcal por objetivo, proteína (definición ~1.9-2.2 g/kg; volumen 1.6-2.2 g/kg), grasa 0.8-1.2 g/kg, resto carbohidratos; 3-5 comidas CON HORA, comida pre y post entreno.
+4) Cardio/pasos según objetivo. 5) Recuperación: sueño 7-9 h y descarga al final del mesociclo. 6) Seguimiento: pesarse 2-3 veces por semana, ajustar 100-250 kcal si el ritmo real se aleja del objetivo, revisar cada 4 semanas.
+Estudios clave que debes usar: meta-regresión de proteína en déficit (hasta ~1.9 g/kg/día se asocia con menor pérdida de masa magra); revisión de Helms (atletas muy delgados en déficit: 2.3-3.1 g/kg de masa libre de grasa); Murphy & Koehler 2022 (entrenar en déficit reduce la ganancia de masa magra, la fuerza casi no); ritmo de pérdida 0.5-1 % del peso/semana; ritmo de ganancia 0.25-0.5 % del peso/semana (más lento cuanto más avanzado); definición típica de 8-16 semanas; mesociclos de 4-8 semanas.
+Estilo: texto corriente en párrafos cortos, máximo 1-2 emojis, sin listas numeradas ni encabezados. No repitas lo que la app ya muestra (lista de ejercicios del plan).
+Siglas: escríbelas SIEMPRE en mayúsculas exactas (RIR, RPE, FST-7, LISS, HIIT, PPL, TDEE, ROM, PR, 1RM, GVT, FFM, NEAT); la app las convierte en botones y al tocarlas explica su significado, así que solo da una definición breve la primera vez.
+Fuentes y estilo (basa tus recomendaciones de entrenamiento y nutrición en estos entrenadores y nombra el estilo cuando lo uses):
+- CBum (Chris Bumstead) y su coach Hany Rambod: split de 3 días entrenando, 1 de descanso (ciclo de 8-9 días), empezando por pierna; rango completo de movimiento, volumen moderado-alto, pausas al final del recorrido, técnicas de intensidad (superseries, tri-series) y método FST-7 de Rambod (7 series con descansos mínimos al final de cada grupo muscular); recuperación como prioridad; en definición mantiene pesas pesadas y camina ~45 min en cinta.
+- Jesse James West: split de 6 días (pierna/hombro, push, pull), cardio diario y comidas frecuentes (unas 6, altas en proteína); aprendió de Ronnie Coleman que el pump y la proteína abundante importan.
+- Anatoly (Vladimir Shmondenko, powerlifter ucraniano): sirve solo para fuerza: base de sentadilla, press de banca y peso muerto, técnica, seguridad y constancia. NO es un referente de hipertrofia ni de dieta.
+- Ricardo Elias: no hay información verificada; no le atribuyas nada.
+Adapta SIEMPRE esos métodos al nivel del usuario (principiante/intermedio natural): menos volumen y nada de FST-7 para principiantes. No inventes citas, series ni planes atribuidos a estas personas; si algo no viene de ellos, dilo.
+Sesión guiada (la app ya lo hace; tus consejos deben coincidir): 1) ANTES de entrenar, calentamiento + estiramiento DINÁMICO de máximo 5 minutos según los músculos del día (el contexto puede traer sesionHoy.calentamiento) y 1-2 series de aproximación; el estiramiento estático largo va al final. 2) Descansos: entre series según el ejercicio (compuesto pesado 2:30-4 min, compuesto 1:30-2:30, aislamiento 45-90 s) y, al CAMBIAR de ejercicio, el descanso se calcula con el ejercicio que SIGUE (más si es un compuesto pesado o el mismo músculo, menos si cambia el músculo). 3) Al terminar, di si toca cardio según el objetivo: definición = LISS 20-30 min después de las pesas (pierna: 15 min sin impacto) y 8-10 mil pasos; volumen = opcional 10-15 min suaves, nunca tras pierna; fuerza = no tras la sesión, solo en días de descanso; mantenimiento = 15-20 min suaves 2-3 veces por semana. Si el contexto trae cierre.cardio, respétalo.
+Divisiones que la app sabe programar: Push/Pull/Legs, Torso/Pierna, Full Body, Arnold (pecho-espalda / pierna / hombros-brazos) y PPL + Torso/Pierna (5 días). Estilos de dieta de la app: equilibrado, classic, alto en proteína, granja, flexible, alto en carbohidratos, bajo en carbohidratos, mediterráneo y económico; recomienda el que mejor encaje y explica por qué en una frase.
+Si la tarea es "session": analiza la sesión del contexto (plan vs. series de hoy vs. sesión anterior) y da un veredicto concreto con pesos y repeticiones para la próxima vez.
+Sé honesto con la incertidumbre y no des consejos médicos; ante dolor o lesión recomienda consultar a un profesional.`;
+
+/* Formato de respuesta (Action-Response): la IA decide y la app ejecuta el command. */
+const SCHEMA_NOTE = `FORMATO DE RESPUESTA (obligatorio): responde SOLO un objeto JSON válido, sin texto fuera de él: {"note":"mensaje humano","command":"none","payload":null}`;
+const SCHEMA_TRAIN = `FORMATO DE RESPUESTA (obligatorio): responde SOLO un objeto JSON válido, sin texto fuera de él:
+{"note":"...","command":"update_routine" | "none","payload":...}
+- note: mensaje humano para el usuario (2-6 frases, sin listas numeradas ni viñetas).
+- command "none" (payload null) mientras falte algo imprescindible: en note haz UNA sola pregunta natural. Imprescindibles: objetivo, nivel, días de entrenamiento y división (o ciclo), cuándo fue su último entrenamiento y qué hizo (o que lleva tiempo sin entrenar) y si tiene lesiones o molestia. Al crear o reestructurar la rutina, si preferences.mech del contexto está vacío, pregunta UNA vez y textualmente por su mecánica (poleas vs mancuernas vs barras, ángulos favoritos y máquinas o ejercicios que no quiere) y guárdalo en payload.preferences.mech; si ya existe, úsalo sin volver a preguntars. NUNCA pidas peso ni estatura. La fase (volumen, definición…) dedúcela del objetivo y solo pregúntala si es ambigua.
+- command "update_routine" en cuanto tengas todo eso (si dice que no tiene molestias, ya lo tienes). Nunca si planLock está activo.
+payload de update_routine:
+{"trainingPlan":[{"day":"Día 1 · Push A","focus":"Pecho, hombros y tríceps","muscles":["pecho","hombros","triceps"],"blocks":["Press inclinado con mancuernas 4x6-8","..."]}],
+ "schedule":{"split":"Push/Pull/Legs","cycle":false,"workDays":3,"restDays":1,"weekdays":[1,3,5]},
+ "startIndex":0,
+ "preferences":{"goal":"hipertrofia|definición|fuerza|consolidación|mantenimiento|dieta inversa","phase":"volumen|consolidación|definición|dieta inversa|mantenimiento","level":"principiante|intermedio|avanzado","injuries":"texto o ninguna","place":"gimnasio|casa","duration":"60 min","mech":{"prio":"polea|mancuerna|barra|maquina|smith|","angles":["inclinado|plano|declinado|unilateral|neutro"],"avoid":"máquinas o ejercicios que NO quiere","notes":"texto"}},
+ "lastWorkout":{"date":"AAAA-MM-DD o vacío","focus":"push|pull|legs|torso|full|","none":false}}
+Reglas del payload: trainingPlan = una entrada por sesión distinta del ciclo (PPL: Push, Pull, Legs; en PPL de 6 días puedes usar A/B), 3-6 bloques por sesión con series x reps. "muscles" solo de: pecho, espalda, hombros, biceps, triceps, core, cuads, isquios, gluteos, gemelos. weekdays: 0=domingo … 6=sábado, solo si entrena días fijos de la semana; si usa ciclo (ej. 3 entrenando y 1 descanso) pon cycle true con workDays y restDays y weekdays []. startIndex = índice (desde 0) de la sesión que toca en el PRIMER día de entreno (continúa donde quedó según su último entrenamiento). Adapta ejercicios a lesiones y nivel (principiante: sin FST-7). Usa "hoy" y "diaSemana" del contexto para calcular fechas.`;
+const SCHEMA_NUTRI = `FORMATO DE RESPUESTA (obligatorio): responde SOLO un objeto JSON válido, sin texto fuera de él:
+{"note":"...","command":"update_macros" | "none","payload":...}
+- note: mensaje humano (2-6 frases, sin listas numeradas ni viñetas).
+- command "none" (payload null) si falta algo imprescindible: haz UNA sola pregunta natural. Imprescindibles: peso, estatura, edad, sexo y objetivo (si perfil es null), y presupuesto, proteínas que come, tiempo de cocina, nevera, estilo, carbohidratos y grasas que prefiere o tolera mejor (pregúntalo textualmente; pregunta también qué alimentos odia o le caen mal) y comidas al día. El campo faltanParaAbrirPlan del contexto lista lo que la app aún necesita.
+- command "update_macros" cuando tengas datos nuevos que guardar (perfil, macros o preferencias), aunque falte algo más: guarda lo que ya sabes y pregunta lo siguiente en note.
+payload de update_macros (incluye solo lo que corresponda):
+{"profile":{"kg":72,"h":175,"age":28,"sex":"m|f","goal":"cut|maint|bulk"},
+ "target":{"kcal":2400,"p":150,"f":65},
+ "preferences":{"budget":"economico|medio|libre","proteins":["pollo","molida","res","cerdo","pescado","atun","huevo","visceras","legumbres"],"cook":"rapido|medio|largo","fridge":"si|mixto|no","style":"batch|hibrido|dia|libres","carbs":["todo|arroz|papa|platano|pasta|avena|pan|arepa|banano"],"fats":["todo|aguacate|mani|aceite"],"dislikes":"texto libre con lo que odia o le cae mal","meals":3,"restrict":["ninguna|lacteos|gluten|vegetariano"],"eatsout":"si|no","supps":["whey|creatina|ninguno"],"barriers":["antojos|tiempo|fuera|cocinar|dinero|hambre"]}}
+profile es obligatorio la primera vez (cuando perfil es null); la app calcula las calorías con Mifflin-St Jeor si no mandas target. Si mandas target: kcal dentro de un rango sano para su objetivo, proteína 1.6-2.2 g/kg, grasa 0.7-1 g/kg; los carbohidratos los completa la app.`;
+const schemaFor = t => (/training/.test(t) ? SCHEMA_TRAIN : /nutrition/.test(t) ? SCHEMA_NUTRI : SCHEMA_NOTE);
+/** Interpreta la respuesta JSON de la IA; si no es JSON válido, el texto se usa como mensaje y no se ejecuta nada. */
+function parseReply(text) {
+  let o = null; try { o = JSON.parse(text); } catch { const m = text.match(/\{[\s\S]*\}/); try { o = m && JSON.parse(m[0]); } catch {} }
+  if (!o || typeof o !== 'object' || Array.isArray(o)) return { note: text, command: 'none', payload: null };
+  const command = ['update_routine', 'update_macros', 'adjust_routine'].includes(o.command) ? o.command : 'none'; // adjust_routine: correcciones puntuales (la app las valida una a una)
+  return { note: String(o.note ?? '').trim() || (command === 'none' ? text : 'Listo.'), command, payload: command === 'none' ? null : (o.payload ?? null) };
+}
+/** Contexto compacto: sin nulos/vacíos ni espacios; si aún pasa del límite se descartan primero los bloques más grandes y menos críticos (nunca se corta el JSON a la mitad). */
+const KEEP_CTX = new Set(['preferences', 'target', 'profile', 'missing', 'faltanParaAbrirPlan', 'planLock', 'schedule', 'trainingPlan', 'question', 'task', 'sesion', 'sesionHoy', 'cierre']);
+const prune = v => { if (Array.isArray(v)) return v.map(prune).filter(x => x !== undefined); if (v && typeof v === 'object') { const o = {}; for (const [k, x] of Object.entries(v)) { const p = prune(x); if (p !== undefined && p !== '' && !(Array.isArray(p) && !p.length) && !(p && typeof p === 'object' && !Array.isArray(p) && !Object.keys(p).length)) o[k] = p; } return o; } return v == null ? undefined : v; };
+function compactCtx(ctx, limit) {
+  const c = prune(ctx) || {}; let s = JSON.stringify(c);
+  if (s.length <= limit) return s;
+  const keys = Object.keys(c).filter(k => !KEEP_CTX.has(k)).sort((a, b) => JSON.stringify(c[b]).length - JSON.stringify(c[a]).length);
+  for (const k of keys) { if (s.length <= limit) break; const v = c[k]; if (Array.isArray(v) && v.length > 6) c[k] = v.slice(-6); else delete c[k]; s = JSON.stringify(c); }
+  return s.length > limit ? s.slice(0, limit) : s;
+}
+/** Modo por tarea: RÁPIDO (validar, responder dudas, anotar datos) vs PROFUNDO (crear/reestructurar rutina o dieta, recalcular macros). */
+const DEEP_RX = /reestructur|rehaz|rehac|arma(r|me)? (mi |una |la )?(rutina|dieta|plan)|crea(r|me)? (mi |una |la )?(rutina|dieta|plan)|genera(r|me)? (mi |una |la )?(rutina|dieta|plan)|cambia(r|me)? (toda |mi |la )?(rutina|dieta|division|división)|nueva (rutina|dieta)|recalcul|configuraci[oó]n inicial|ajusta(r)? (mi |la )?(rutina|dieta)/i;
+export function pickMode(task, payload = {}, text = '') {
+  if (payload.mode === 'deep' || payload.mode === 'fast') return payload.mode;
+  if (/audit|restructure|reestruct/i.test(String(payload.task || task))) return 'deep';
+  if (/training/.test(String(payload.task || task)) && !(payload.trainingPlan || []).length) return 'deep'; // aún no hay rutina: toca generar el plan completo
+  return DEEP_RX.test(String(text)) ? 'deep' : 'fast';
+}
+/** Arma la petición (system + historial + mensaje) UNA sola vez: la usan igual la llamada directa (clave en el dispositivo) y el proxy seguro (Edge Function). */
+function buildRequest(task, payload) {
+  const isMeal = task === 'meal';
+  const { systemPrompt = '', recentMessages = [], currentMessage, question, ...ctx } = payload;
+  const cur = String(isMeal ? payload.text ?? '' : (currentMessage ?? question ?? `Tarea automática "${payload.task ?? task}": redacta un consejo breve y concreto usando el contexto.`));
+  const deep = !isMeal && pickMode(task, payload, cur) === 'deep';
+  const system = isMeal
+    ? `${BASE}\nTarea: estima los macros de la comida descrita. Responde SOLO JSON: {"items":[{"name":str,"k":int,"p":int,"c":int,"f":int}],"confidence":0-1,"note":str}. Si faltan cantidades asume porciones típicas y baja la confianza.`
+    : `${BASE}\n${systemPrompt}\n${schemaFor(String(payload.task ?? task))}\nContexto (JSON) de ${sessionStorage.getItem('al:profile') || 'juani'}: ${compactCtx(ctx, deep ? 14000 : 6500)}`;
+  let hist = isMeal ? [] : recentMessages.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: String(m.text ?? '') }));
+  while (hist.length && hist[hist.length - 1].role === 'assistant') hist.pop();               // respuesta local provisional
+  if (hist.length && hist[hist.length - 1].content === cur) hist.pop();                       // el mensaje actual se agrega aparte
+  const messages = [{ role: 'system', content: system }, ...hist.slice(-8), { role: 'user', content: cur }];
+  const heavy = /training|nutrition|audit/.test(String(payload.task || task));
+  return { messages, isMeal, opts: { heavy: heavy && deep, isMeal, deep, fast: !isMeal && !deep } };
+}
+function finishReply(text, isMeal) {
+  if (isMeal) { let o; try { o = JSON.parse(text); } catch { try { o = JSON.parse((text.match(/\{[\s\S]*\}/) || [''])[0] || '{}'); } catch { o = {}; } } if (!Array.isArray(o.items) || !o.items.length) throw new AIError('other', 'No pude estimar la comida'); return o; }
+  return parseReply(text);
+}
+/** Clave guardada en este dispositivo: llamada directa al proveedor (Gemini u OpenAI). */
+async function direct(task, payload) { const rq = buildRequest(task, payload); return finishReply(await generate(rq.messages, rq.opts), rq.isMeal); }
+/** Sin clave en el dispositivo pero con Supabase configurado: la Edge Function «ai» guarda la clave como secreto y reenvía la MISMA petición (mismo prompt, mismos comandos, también fotos). */
+async function proxy(messages, opts, ms = 60000) {
+  let last;
+  for (let i = 0; i < 2; i++) {
+    try {
+      const { res, j } = await http(SUPABASE_URL + '/functions/v1/ai', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + SUPABASE_ANON_KEY, apikey: SUPABASE_ANON_KEY },
+        body: JSON.stringify({ messages, opts, profile: sessionStorage.getItem('al:profile') || 'juani' }) }, ms);
+      if (!res.ok || !j || j.error) throw new AIError(res.status === 429 ? 'quota' : res.status >= 500 ? 'server' : 'other', j?.error || `IA no disponible (${res.status})`);
+      const text = String(j.text ?? j.note ?? '').trim(); if (!text) throw new AIError('empty', 'La IA no devolvió texto. Reintenta.');
+      if (conn.state !== 'ok') setConn({ state: 'ok', kind: '', msg: '', model: j.model || '', provider: j.provider || 'IA' });
+      return text;
+    } catch (e) { last = e; if (!(e instanceof AIError) || !['network', 'server', 'timeout'].includes(e.kind) || i) break; await sleep(800); }
+  }
+  throw last;
+}
+const noteFail = e => { if (e instanceof AIError && ['network', 'timeout', 'key', 'quota', 'server'].includes(e.kind)) setConn({ state: e.kind === 'network' && typeof navigator !== 'undefined' && navigator.onLine === false ? 'offline' : 'fail', kind: e.kind, msg: e.message }); };
+
+/* Llamadas a cada proveedor + cadena de respaldo (reintenta red/saturación y cambia de modelo si hay cupo agotado o no existe). */
+async function gemCall(key, model, messages, { isMeal, vision, deep, fast }, noThink = false) {
+  const sys = messages.filter(m => m.role === 'system').map(m => m.content).join('\n\n'), contents = [];
+  for (const m of messages) { if (m.role === 'system') continue; const role = m.role === 'assistant' ? 'model' : 'user', text = String(m.content ?? ''), img = m.image ? { inline_data: { mime_type: m.image.mime, data: m.image.b64 } } : null;
+    if (contents.length && contents[contents.length - 1].role === role) { const last = contents[contents.length - 1]; last.parts[0].text += '\n\n' + text; if (img) last.parts.push(img); } else contents.push({ role, parts: img ? [{ text }, img] : [{ text }] }); }
+  while (contents.length && contents[0].role === 'model') contents.shift();
+  const gen = { maxOutputTokens: isMeal ? (vision ? 6000 : 1800) : fast ? 4096 : 8000, responseMimeType: 'application/json', temperature: isMeal ? 0.2 : fast ? 0.5 : 0.7 };
+  if (!noThink && !vision) gen.thinkingConfig = /gemini-3/.test(model) ? { thinkingLevel: deep ? 'medium' : 'low' } : /gemini-2\.5-(flash|flash-lite)/.test(model) ? { thinkingBudget: deep ? 1024 : 0 } : undefined; // sin «pensar» largo en tareas rápidas: la latencia baja varios segundos
+  if (!gen.thinkingConfig) delete gen.thinkingConfig;
+  const body = { contents, generationConfig: gen };
+  if (sys) body.systemInstruction = { parts: [{ text: sys }] };
+  const { res, j } = await http(`${GEM}/models/${encodeURIComponent(model)}:generateContent`, { method: 'POST', headers: { 'x-goog-api-key': key, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, fast || isMeal ? 40000 : 90000);
+  if (!res.ok && res.status === 400 && gen.thinkingConfig && /think/i.test(JSON.stringify(j || {}))) return gemCall(key, model, messages, { isMeal, vision, deep, fast }, true); // modelo sin ese parámetro
+  if (!res.ok) throw statusErr(res, j);
+  const c = j?.candidates?.[0], text = (c?.content?.parts || []).filter(p => !p.thought).map(p => p.text || '').join('').trim();
+  if (!text) throw new AIError(j?.promptFeedback?.blockReason || c?.finishReason === 'SAFETY' ? 'blocked' : 'empty', j?.promptFeedback?.blockReason || c?.finishReason === 'SAFETY' ? 'Gemini bloqueó esa respuesta. Reformula tu mensaje.' : 'Gemini no devolvió texto. Reintenta.');
+  return text;
+}
+async function oaiCall(key, model, messages, { heavy, isMeal }) {
+  const reasoning = /^(gpt-[5-9]|o\d)/.test(model), url = PROVIDERS.openai.base + '/chat/completions';
+  const msgs = messages.map(m => (m.image ? { role: m.role, content: [{ type: 'text', text: String(m.content ?? '') }, { type: 'image_url', image_url: { url: `data:${m.image.mime};base64,${m.image.b64}` } }] } : m));
+  const mk = plain => JSON.stringify({ model, messages: msgs, max_completion_tokens: reasoning ? (isMeal ? 3000 : 8000) : (isMeal ? 1500 : 4000),
+    ...(plain ? {} : reasoning ? { reasoning_effort: !heavy ? 'low' : 'medium' } : { temperature: isMeal ? 0.2 : 0.7 }), response_format: { type: 'json_object' } });
+  const init = body => ({ method: 'POST', headers: { Authorization: 'Bearer ' + key, 'Content-Type': 'application/json' }, body });
+  let { res, j } = await http(url, init(mk(false)), 90000);
+  if (res.status === 400 && /reasoning_effort|temperature|max_completion_tokens/i.test(j?.error?.message || '')) ({ res, j } = await http(url, init(mk(true)), 90000)); // sin parámetros opcionales
+  if (!res.ok) { if ([400, 403, 404].includes(res.status) && /model|access|exist|not found/i.test(JSON.stringify(j?.error || j || ''))) throw new AIError('model', 'Ese modelo no existe o tu cuenta no tiene acceso.'); throw statusErr(res, j); }
+  return String(j?.choices?.[0]?.message?.content ?? '').trim();
+}
+async function generate(messages, opts) {
+  const key = getKey(), g = providerOf(key) === 'gemini';
+  let chain; try { const forced = localStorage.getItem('al:aimodel'); chain = forced ? [forced] : await selectModel(key); } catch (e) { chain = [PROVIDERS[providerOf(key)].fallback]; }
+  if (opts?.fast && !localStorage.getItem('al:aimodel')) { const lite = chain.filter(m => /lite/.test(m)); if (lite.length) chain = [...lite, ...chain.filter(m => !lite.includes(m))]; } // respuestas rápidas: primero el modelo más ligero disponible
+  const recentFail = conn.state !== 'ok' && ['network', 'timeout'].includes(conn.kind) && Date.now() - conn.at < 30000; // ya sabemos que no hay red: no hacer esperar
+  let last;
+  for (const model of chain) {
+    for (let attempt = 0; attempt < (recentFail ? 1 : 2); attempt++) {
+      try { const text = g ? await gemCall(key, model, messages, opts) : await oaiCall(key, model, messages, opts); if (conn.state !== 'ok' || conn.model !== model) setConn({ state: 'ok', kind: '', msg: '', model, provider: pname() }); return text; }
+      catch (e) { last = e; if (!(e instanceof AIError)) throw e;
+        if (['network', 'server'].includes(e.kind) || (e.kind === 'timeout' && attempt === 0)) { if (attempt < 1) await sleep(600); continue; }
+        if (['model', 'quota', 'empty'].includes(e.kind)) break; // siguiente modelo de la cadena
+        throw e; }
+    }
+  }
+  throw last || new AIError('other', 'La IA no respondió.');
+}
+
+/* ---------- v32: análisis de fotos (plato o tabla nutricional) con el modelo de visión de tu clave ---------- */
+const VISION_FOOD = `Eres un nutricionista deportivo que estima calorías y macros de un plato a partir de una FOTO (cocina colombiana frecuente: arroz, fríjoles, plátano, arepa, huevos, pollo, corrientazo).
+Pasos: 1) identifica cada alimento visible por separado; 2) estima el peso en gramos de cada porción usando referencias de la imagen (plato ~25 cm, cubiertos, manos, empaques); 3) suma grasas ocultas (aceite, mantequilla, salsas, fritura) cuando se vean brillos o fritos; 4) calcula kcal, proteína, carbohidratos y grasa de cada alimento con valores nutricionales estándar y coherentes (kcal ≈ 4·P + 4·C + 9·G).
+Si el usuario aporta contexto (gramos, ingredientes, marca) úsalo por encima de tu estimación visual. Si algo no se ve (sopas, batidos, rellenos) dilo en note y baja la confianza. Si la imagen no tiene comida devuelve items [] y explícalo en note. No inventes alimentos que no se vean.
+Responde SOLO un JSON válido: {"items":[{"name":"...","grams":150,"k":250,"p":20,"c":10,"f":12}],"confidence":0.0,"note":"supuestos y qué dato mejoraría la estimación (máx. 2 frases)"}`;
+const VISION_LABEL = `Lees la TABLA NUTRICIONAL de un empaque a partir de una FOTO. Copia los valores tal como están impresos; no inventes ni estimes números que no se vean.
+Extrae: nombre del producto si aparece, el tamaño de la porción (texto y gramos/ml si se indican), y los valores POR PORCIÓN y, si la tabla los trae, POR 100 g. k = calorías (kcal), p = proteína (g), c = carbohidratos totales (g), f = grasa total (g). Si la tabla está en kJ, convierte a kcal (kJ / 4.184).
+Si la imagen no es una tabla nutricional o no se lee, devuelve confidence 0 y explica en note qué falló (luz, enfoque, ángulo).
+Responde SOLO un JSON válido: {"product":"","servingText":"1 porción (30 g)","servingGrams":30,"perServing":{"k":0,"p":0,"c":0,"f":0},"per100g":{"k":0,"p":0,"c":0,"f":0},"confidence":0.0,"note":""}. Usa null en per100g si no aparece.`;
+/** kind: 'food' | 'label'. dataUrl: JPEG en base64 (la app lo reduce antes). hint: texto opcional del usuario. Devuelve el JSON del modelo. */
+export async function aiVision(kind, dataUrl, hint = '') {
+  if (!getKey() && !(configured && !offline)) throw new AIError('key', 'Falta conectar la IA para analizar fotos.');
+  const m = /^data:([^;]+);base64,(.+)$/.exec(dataUrl); if (!m) throw new AIError('other', 'No pude leer la imagen.');
+  const messages = [{ role: 'system', content: kind === 'label' ? VISION_LABEL : VISION_FOOD }, { role: 'user', content: hint ? `Contexto del usuario: ${hint}` : 'Analiza esta imagen.', image: { mime: m[1], b64: m[2] } }];
+  let text;
+  const vopts = { heavy: false, isMeal: true, vision: true };
+  try { text = getKey() ? await generate(messages, vopts) : await proxy(messages, vopts, 90000); }
+  catch (e) { noteFail(e); throw e; }
+  let o; try { o = JSON.parse(text); } catch { try { o = JSON.parse((text.match(/\{[\s\S]*\}/) || ['{}'])[0]); } catch { o = {}; } }
+  if (!o || typeof o !== 'object' || Array.isArray(o)) throw new AIError('empty', 'La IA no devolvió un resultado legible. Reintenta con otra foto.');
+  return o;
+}
+
+export async function ai(task, payload) {
+  if (getKey()) { try { return await direct(task, payload); } catch (e) { noteFail(e); throw e; } }
+  if (LOCAL_MODE && AI_ON) { // sin clave local: proxy seguro (misma petición y mismo formato de respuesta que la llamada directa)
+    const rq = buildRequest(task, payload);
+    try { return finishReply(await proxy(rq.messages, rq.opts, rq.opts.deep ? 90000 : 60000), rq.isMeal); } catch (e) { noteFail(e); throw e; }
+  }
+  if (!sb) throw new Error('La IA requiere iniciar sesión');
+  const rq = buildRequest(task, payload);
+  const { data, error } = await timeout(sb.functions.invoke('ai', { body: { messages: rq.messages, opts: rq.opts } }), rq.opts.deep ? 90000 : 60000);
+  if (error || !data || data.error) throw new Error(data?.error || error?.message || 'IA no disponible');
+  return finishReply(String(data.text ?? data.note ?? ''), rq.isMeal);
+}
